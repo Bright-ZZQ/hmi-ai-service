@@ -87,6 +87,10 @@ export interface AgentConfig {
   modelApiMaxRetries: number
   /** 模型 API 重试基础延迟（ms，默认 1000，指数退避） */
   modelApiRetryDelay: number
+  /** 模型 API 重试最大延迟（ms，默认 120000） */
+  modelApiRetryMaxDelay: number
+  /** 429 限流重试基础延迟（ms，默认 60000） */
+  modelApiRateLimitRetryDelay: number
 }
 
 /** SSE 事件类型 */

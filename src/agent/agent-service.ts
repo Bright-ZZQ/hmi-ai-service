@@ -14,7 +14,7 @@
  */
 
 import { getToolsForType, isAssemblyTool } from './skill-registry'
-import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument } from './element-builders'
+import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement } from './element-builders'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
   EditorType,
@@ -72,6 +72,13 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 调用 assemble 工具后，整个生成流程完成
 - 坐标原点在左上角，x 向右增大，y 向下增大`
 
+function getSystemPrompt(editorType: EditorType): string {
+  const target = editorType === 'symbol'
+    ? `本次任务必须生成图符（Symbol）。只能调用 create_symbol_* 和 assemble_symbol；最终 JSON 顶层必须包含 comps，禁止输出 document。`
+    : `本次任务必须生成图纸（Display）。只能调用 create_display_* 和 assemble_display；最终 JSON 顶层必须包含 document，禁止输出 comps。`
+  return `${SYSTEM_PROMPT}\n\n## 本次输出类型（强制）\n\n${target}`
+}
+
 // ============================================================
 // 会话状态
 // ============================================================
@@ -126,7 +133,12 @@ function mergeElement(
 
 function getElementAliases(element: Record<string, unknown>): string[] {
   const store = isPlainObject(element.store) ? element.store : {}
-  return [element.id, element.code, element.key, element.name, store.id, store.code, store.key, store.name]
+  const attrs = isPlainObject(element.attrs) ? element.attrs : {}
+  return [
+    element.id, element.code, element.key, element.name,
+    attrs.id, attrs.code, attrs.key, attrs.name,
+    store.id, store.code, store.key, store.name, store.node_id,
+  ]
     .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
     .map(String)
 }
@@ -150,6 +162,19 @@ const TOOL_TO_ELEMENT_TYPE: Record<string, string> = {
   create_display_pie: 'Pie',
 }
 
+/** 映射 create_symbol_xxx 工具名到 symbol comp 类型 */
+const TOOL_TO_SYMBOL_TYPE: Record<string, string> = {
+  create_symbol_rect: 'Rect',
+  create_symbol_ellipse: 'Ellipse',
+  create_symbol_text: 'Text',
+  create_symbol_line: 'Line',
+  create_symbol_polygon: 'Polygon',
+  create_symbol_polyline: 'Curve',
+  create_symbol_arc: 'Arc',
+  create_symbol_chord: 'Chord',
+  create_symbol_pie: 'Pie',
+}
+
 /**
  * 执行单个工具调用
  * @returns 工具执行结果字符串
@@ -161,6 +186,7 @@ function executeToolCall(
   onStep: (step: AgentStep) => void,
 ): string {
   const elementType = TOOL_TO_ELEMENT_TYPE[name]
+  const symbolType = TOOL_TO_SYMBOL_TYPE[name]
 
   // 1. 图元创建工具
   if (elementType) {
@@ -170,6 +196,25 @@ function executeToolCall(
     const step: AgentStep = {
       type: 'tool_call',
       content: `已创建 ${elementType} 图元: ${element.name || '(自动命名)'}`,
+      toolName: name,
+      toolArgs: args,
+      timestamp: Date.now(),
+    }
+    session.steps.push(step)
+    onStep(step)
+
+    return JSON.stringify(element)
+  }
+
+  // 1b. 图符图元创建工具
+  if (symbolType) {
+    const element = buildSymbolElement(symbolType, args)
+    session.workingElements.push(element)
+    const attrs = isPlainObject(element.attrs) ? element.attrs : {}
+
+    const step: AgentStep = {
+      type: 'tool_call',
+      content: `已创建 ${symbolType} 图符图元: ${attrs.name || '(自动命名)'}`,
       toolName: name,
       toolArgs: args,
       timestamp: Date.now(),
@@ -240,7 +285,7 @@ function executeToolCall(
     const effectiveElements = (elementsData && elementsData.length > 0) ? elementsData : session.workingElements
     const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
     const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
-    const document = buildDisplayDocument({
+    const document: Record<string, unknown> = buildDisplayDocument({
       pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
       elementsData: effectiveElements,
       pageWidth: (args.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
@@ -284,6 +329,12 @@ function executeToolCall(
     const compsData = (args.compsData as Record<string, unknown>[])
     // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
     const effectiveComps = (compsData && compsData.length > 0) ? compsData : session.workingElements
+    if (effectiveComps.length === 0) {
+      return JSON.stringify({
+        success: false,
+        error: '图符没有任何图元。请先成功调用 create_symbol_*，再调用 assemble_symbol。',
+      })
+    }
     const baseSymbol = session.currentJson
     const baseStore = baseSymbol?.store as Record<string, unknown> | undefined
     const builtSymbol = buildSymbolDocument({
@@ -320,7 +371,70 @@ function executeToolCall(
     return JSON.stringify(symbol)
   }
 
-  // 6. 动态特性工具（当前为占位实现）
+  // 6. 旋转动态特性
+  if (name === 'add_feature_rotate') {
+    const target = String(args.elementName || '')
+    const index = findElementIndex(session.workingElements, target)
+    if (index < 0) {
+      return JSON.stringify({ success: false, error: `未找到需要旋转的图元: ${target}` })
+    }
+
+    const element = session.workingElements[index]
+    const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
+    const existingFeatures = Array.isArray(elementStore.dynamicDyna)
+      ? [...elementStore.dynamicDyna]
+      : []
+    const original = (value: unknown) => ({ original: value, ref: '' })
+    const rotMode = Number(args.rotMode ?? 0)
+    const conditions = args.dataSourceKey ? [{
+      num: '1',
+      leftValue: { nodeId: '', tagName: String(args.dataSourceKey), nodeType: '' },
+      sign: Number(args.conditionOperator ?? 0),
+      rightValue: original(String(args.conditionValue ?? '1')),
+      logicSign: 0,
+      logic: '',
+      conditions: [],
+    }] : []
+    const pars = rotMode === 1 ? {
+      rotMode: original(1), rotModeRef: original(''),
+      rotCenter: original(Number(args.rotCenter ?? 5)), rotCenterRef: original(''),
+      ds: original({ nodeId: '', tagName: String(args.dsDataSourceKey || ''), nodeType: '' }), dsRef: original(''),
+      maxAngle: original(Number(args.maxAngle ?? 360)), maxAngleRef: original(''),
+      minAngle: original(Number(args.minAngle ?? 0)), minAngleRef: original(''),
+      useDB: original(Number(args.useDB ?? 0)), useDBRef: original(''),
+      mu: original(Number(args.mu ?? 100)), muRef: original(''),
+      md: original(Number(args.md ?? 0)), mdRef: original(''),
+    } : {
+      rotMode: original(0), rotModeRef: original(''),
+      rotCenter: original(Number(args.rotCenter ?? 5)), rotCenterRef: original(''),
+      rotAngle: original(Number(args.rotAngle ?? 5)), rotAngleRef: original(''),
+      rotCond: original(Number(args.rotCond ?? 0)), rotCondRef: original(''),
+      condTrue: original(Number(args.condTrue ?? 0)), condTrueRef: original(''),
+      condFalse: original(Number(args.condFalse ?? 0)), condFalseRef: original(''),
+    }
+    existingFeatures.push({
+      id: globalThis.crypto.randomUUID(),
+      name: 'GraphDynaRotate',
+      type: 'GraphDynaRotate',
+      conditions,
+      not: Boolean(args.not ?? false),
+      pars,
+    })
+    element.store = { ...elementStore, dynamicDyna: existingFeatures }
+
+    const step: AgentStep = {
+      type: 'tool_call',
+      content: `已为图元 "${target}" 添加旋转动态特性`,
+      toolName: name,
+      toolArgs: args,
+      timestamp: Date.now(),
+    }
+    session.steps.push(step)
+    onStep(step)
+    return JSON.stringify({ success: true, element })
+  }
+
+  // 7. 其他动态特性工具（当前为占位实现）
   if (name.startsWith('add_feature_')) {
     const featureName = name.replace('add_feature_', '')
     const step: AgentStep = {
@@ -383,7 +497,7 @@ export async function runAgentLoop(
     .slice(-10)
     .map(message => ({ role: message.role, content: message.content.slice(0, 4000) } as AgentMessage))
 
-  const messages: AgentMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }]
+  const messages: AgentMessage[] = [{ role: 'system', content: getSystemPrompt(editorType) }]
   if (context.currentJson) {
     messages.push({
       role: 'system',
@@ -406,10 +520,10 @@ export async function runAgentLoop(
     onStep(thinkingStep)
 
     // 调用模型 API（流式）
-    const response = await callModel(config, messages, tools, onSSEEvent)
+    const { response, retryCount } = await callModel(config, messages, tools, onSSEEvent)
 
     if (!response) {
-      const retried = config.modelApiMaxRetries > 0 ? `（已重试 ${config.modelApiMaxRetries} 次）` : ''
+      const retried = retryCount > 0 ? `（已重试 ${retryCount} 次）` : ''
       return {
         success: false,
         error: `模型 API 调用失败${retried}`,
@@ -508,9 +622,16 @@ export async function runAgentLoop(
       if (json) {
         // 判断类型
         const detectedType = detectType(json)
-        const effectiveType = detectedType || editorType
+        if (detectedType && detectedType !== editorType) {
+          retries++
+          const errMsg = `输出类型错误：本次要求 ${editorType}，模型却输出了 ${detectedType}。请使用本次类型对应的 create/assemble 工具重新生成。`
+          messages.push({ role: 'assistant', content })
+          messages.push({ role: 'user', content: errMsg })
+          onSSEEvent({ type: 'error', content: errMsg, retry: true })
+          continue
+        }
 
-        const errors = validateOutput(json, effectiveType)
+        const errors = validateOutput(json, editorType)
         if (errors.length === 0) {
           session.finalJson = json
 
@@ -571,14 +692,18 @@ interface ModelResponse {
   error?: { message: string }
 }
 
+interface ModelCallResult {
+  response: ModelResponse | null
+  retryCount: number
+}
+
 async function callModel(
   config: AgentConfig,
   messages: AgentMessage[],
   tools: unknown[],
   onSSEEvent: (event: SSEEvent) => void,
-): Promise<ModelResponse | null> {
+): Promise<ModelCallResult> {
   const maxRetries = config.modelApiMaxRetries
-  const baseDelay = config.modelApiRetryDelay
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -608,28 +733,34 @@ async function callModel(
         const errText = await res.text()
         console.error(`[AgentService] API 调用失败 (attempt ${attempt + 1}/${maxRetries + 1}):`, res.status, errText)
 
-        // 4xx 错误（认证失败、参数错误等）不重试
-        if (res.status < 500) {
-          return null
+        const isRateLimited = res.status === 429
+        const isRetryable = isRateLimited || res.status === 408 || res.status >= 500
+
+        // 认证失败、参数错误等不可恢复错误不重试
+        if (!isRetryable) {
+          return { response: null, retryCount: attempt }
         }
-        // 5xx 错误 → 进入重试
+
         if (attempt < maxRetries) {
-          const delay = baseDelay * Math.pow(2, attempt)
+          const delay = getRetryDelay(config, attempt, res.status, res.headers.get('retry-after'))
+          const reason = isRateLimited
+            ? '模型服务触发速率限制'
+            : `模型服务暂时不可用 (HTTP ${res.status})`
           onSSEEvent({
             type: 'retry',
-            content: `模型服务暂时不可用 (HTTP ${res.status})，正在重试 (${attempt + 1}/${maxRetries})...`,
+            content: `${reason}，将在 ${formatDelay(delay)} 后重试 (${attempt + 1}/${maxRetries})...`,
           })
           await sleep(delay)
           continue
         }
-        return null
+        return { response: null, retryCount: attempt }
       }
 
       // 流式读取模型 API 响应
       const reader = res.body?.getReader()
       if (!reader) {
         console.error('[AgentService] 无法获取响应流')
-        return null
+        return { response: null, retryCount: attempt }
       }
 
       const decoder = new TextDecoder()
@@ -702,28 +833,71 @@ async function callModel(
       }
 
       return {
-        choices: [{
-          message,
-          finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
-        }],
+        response: {
+          choices: [{
+            message,
+            finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+          }],
+        },
+        retryCount: attempt,
       }
     } catch (err) {
       console.error(`[AgentService] 网络请求异常 (attempt ${attempt + 1}/${maxRetries + 1}):`, err)
 
       if (attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt)
+        const delay = getRetryDelay(config, attempt)
         onSSEEvent({
           type: 'retry',
-          content: `网络连接失败，正在重试 (${attempt + 1}/${maxRetries})...`,
+          content: `网络连接失败，将在 ${formatDelay(delay)} 后重试 (${attempt + 1}/${maxRetries})...`,
         })
         await sleep(delay)
         continue
       }
-      return null
+      return { response: null, retryCount: attempt }
     }
   }
 
-  return null
+  return { response: null, retryCount: maxRetries }
+}
+
+/** 计算指数退避延迟；429 至少等待一个 TPM 统计窗口，并优先遵循 Retry-After。 */
+function getRetryDelay(
+  config: AgentConfig,
+  attempt: number,
+  status?: number,
+  retryAfter?: string | null,
+): number {
+  const configuredBaseDelay = status === 429
+    ? Math.max(config.modelApiRetryDelay, config.modelApiRateLimitRetryDelay)
+    : config.modelApiRetryDelay
+  const baseDelay = Number.isFinite(configuredBaseDelay) ? Math.max(0, configuredBaseDelay) : 0
+  const configuredMaxDelay = Number.isFinite(config.modelApiRetryMaxDelay)
+    ? config.modelApiRetryMaxDelay
+    : baseDelay
+  const maxDelay = Math.max(baseDelay, configuredMaxDelay)
+  const exponentialDelay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay)
+  const retryAfterDelay = parseRetryAfter(retryAfter)
+  const delay = Math.max(exponentialDelay, retryAfterDelay ?? 0)
+  const jitter = Math.floor(Math.random() * Math.min(delay * 0.1, 5000))
+  return delay + jitter
+}
+
+/** 支持 Retry-After 的秒数或 HTTP 日期格式。 */
+function parseRetryAfter(value?: string | null): number | null {
+  if (!value) return null
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000
+  }
+
+  const retryAt = Date.parse(value)
+  if (Number.isNaN(retryAt)) return null
+  return Math.max(0, retryAt - Date.now())
+}
+
+function formatDelay(delay: number): string {
+  return `${Math.ceil(delay / 1000)} 秒`
 }
 
 /** 延迟工具函数 */

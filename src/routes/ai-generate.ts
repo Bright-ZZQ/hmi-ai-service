@@ -10,7 +10,8 @@ import { runAgentLoop } from '../agent/agent-service'
 import { loadConfig } from '../config'
 import type { EditorType, SSEEvent, AgentResult, ConversationMessage } from '../types'
 
-const router = Router()
+// 显式标注，避免 declaration emit 泄漏 pnpm 内部的类型解析路径。
+const router: Router = Router()
 
 router.post('/ai/generate', async (req: Request, res: Response) => {
   const { prompt, editorType, history, currentJson } = req.body as {

@@ -21,6 +21,8 @@ export function loadConfig(): ServiceConfig {
       maxRetries: parseInt(process.env.AI_MAX_RETRIES || '2', 10),
       modelApiMaxRetries: parseInt(process.env.AI_MODEL_API_MAX_RETRIES || '3', 10),
       modelApiRetryDelay: parseInt(process.env.AI_MODEL_API_RETRY_DELAY || '1000', 10),
+      modelApiRetryMaxDelay: parseInt(process.env.AI_MODEL_API_RETRY_MAX_DELAY || '120000', 10),
+      modelApiRateLimitRetryDelay: parseInt(process.env.AI_MODEL_API_RATE_LIMIT_RETRY_DELAY || '60000', 10),
     },
   }
 }

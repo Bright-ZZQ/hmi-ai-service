@@ -715,6 +715,12 @@ const ADD_FEATURE_ROTATE: SkillRegistryEntry = {
   },
 }
 
+// 旋转特性同时适用于图纸元素和图符 comp；两个编辑器需要各自注册一次。
+const ADD_FEATURE_ROTATE_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_ROTATE,
+  group: 'symbol',
+}
+
 // ============================================================
 // Symbol 图符组 — 图元创建工具
 // ============================================================
@@ -1104,6 +1110,9 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   CREATE_SYMBOL_ARC,
   CREATE_SYMBOL_CHORD,
   CREATE_SYMBOL_PIE,
+
+  // Symbol 图符组 — 动态特性
+  ADD_FEATURE_ROTATE_SYMBOL,
 
   // Symbol 图符组 — 已有图元编辑
   UPDATE_SYMBOL_ELEMENT,
