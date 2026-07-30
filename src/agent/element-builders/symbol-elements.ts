@@ -65,12 +65,25 @@ function commonAttrs(args: Record<string, unknown>, name: string) {
   }
 }
 
-function store(shape: string, width: number, height: number) {
-  return {
+function store(shape: string, width: number, height: number, args?: Record<string, unknown>) {
+  const base: Record<string, unknown> = {
     shape,
     _originInfo: { width, height },
     node_id: generateNodeId(),
   }
+  if (args) {
+    // 填充渐变：store.gradientMode + store.gradientColor（attrs.fill 作为起点色）
+    if (typeof args.fillGradient === 'string' && args.fillGradient) {
+      base.gradientMode = args.fillGradient
+      base.gradientColor = string(args.fillEndColor, string(args.fill, '#D8D8D8'))
+    }
+    // 边框渐变：store.borderGradientMode + store.borderGradientColor
+    if (typeof args.strokeGradient === 'string' && args.strokeGradient) {
+      base.borderGradientMode = args.strokeGradient
+      base.borderGradientColor = string(args.strokeEndColor, string(args.stroke, '#979797'))
+    }
+  }
+  return base
 }
 
 function buildRect(args: Record<string, unknown>) {
@@ -86,7 +99,7 @@ function buildRect(args: Record<string, unknown>) {
     height,
   }
   if (cornerRadius !== undefined) attrs.cornerRadius = cornerRadius
-  return { className: 'Rect', attrs, store: store(shape, width, height) }
+  return { className: 'Rect', attrs, store: store(shape, width, height, args) }
 }
 
 function buildEllipse(args: Record<string, unknown>) {
@@ -103,7 +116,7 @@ function buildEllipse(args: Record<string, unknown>) {
       radiusX: width / 2,
       radiusY: height / 2,
     },
-    store: store('Ellipse', width, height),
+    store: store('Ellipse', width, height, args),
   }
 }
 
@@ -165,7 +178,7 @@ function buildLineLike(
   return {
     className: options.className,
     attrs,
-    store: store(options.shape, box.width, box.height),
+    store: store(options.shape, box.width, box.height, args),
   }
 }
 
@@ -190,7 +203,7 @@ function buildArcLike(
   return {
     className: options.className,
     attrs,
-    store: store(options.shape, width, height),
+    store: store(options.shape, width, height, args),
   }
 }
 

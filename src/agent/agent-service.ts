@@ -14,7 +14,8 @@
  */
 
 import { getToolsForType, isAssemblyTool } from './skill-registry'
-import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement } from './element-builders'
+import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment } from './element-builders'
+import type { MetricPanelParams, EquipmentParams } from './element-builders'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
   EditorType,
@@ -42,6 +43,20 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 3. 所有图元创建完毕后，调用 assemble_display 或 assemble_symbol 组装成完整的图纸/图符 JSON
 4. 组装工具会自动使用你创建的所有图元，无需手动指定 elementsData 参数（除非你有特殊需求）
 
+## 优先使用复合组件（关键，避免重叠）
+
+**禁止**用一堆 create_display_text 手工逐像素拼"标签+数值"表格——这极易算错坐标导致重叠、越界。改用以下复合工具，其内部坐标由布局引擎**确定性计算**，保证不重叠、不越界、对齐整齐：
+
+- **数据面板 / 指标列表 / 监控读数** → 必须用 \`create_metric_panel\`：只给标题和 rows（{label, value, status}），一次产出整块面板。
+- **工艺设备**（储罐/塔器/炉子等）→ 必须用 \`create_equipment\`：只给 kind 和包围盒 x/y/width/height，一次产出比例正确的设备图符。
+- 仅**装饰性、零散**的图元（标题文字、连接线、箭头、背景）才用 create_display_* 原语逐个绘制。
+
+## 图层顺序（关键，避免遮挡）
+
+- **背景/整块底板必须最先创建**：图元的绘制层级由创建顺序决定（先创建 = 在底层，后创建 = 在上层）。若先画内容再画覆盖整块画布的背景，背景就会盖住内容。
+- 正确顺序：① 全屏背景 → ② 卡片/面板等容器底板 → ③ 文本、数值、状态灯、图标等内容 → ④ 连接线/箭头。
+- 覆盖整块画布的背景务必贴着画布左上角(0,0)并铺满 pageWidth×pageHeight。
+
 ## 多轮修改
 
 - 当系统提供“当前 JSON”时，表示用户正在修改上一轮结果
@@ -58,6 +73,13 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 2-3 个图元: 水平等距排列
 - 4+ 个图元: 网格排列
 
+## 画布尺寸与防重叠（关键）
+
+- **所有图元必须完整落在画布范围内**（0 ≤ x，x+width ≤ pageWidth；0 ≤ y，y+height ≤ pageHeight），四周至少保留 20px 边距，禁止越界、禁止相互重叠（背景、卡片容器等作为底层容器除外）。
+- **先规划再绘制**：在创建图元前，先按内容数量估算每个卡片/面板/图表所需的宽高，累加后判断默认 1880×962 是否放得下。
+- **放不下就扩大画布**：如果内容较多、按合理间距排布会超出默认尺寸或导致图元重叠、拥挤，**必须调大画布**——在调用 \`assemble_display\` 时显式传入更大的 \`pageWidth\` / \`pageHeight\`（例如 2400×1350、2560×1440，或按需继续加大），而不是把图元硬塞进小画布造成重叠。
+- 宁可扩大画布留出充足留白，也不要让图元挤在一起或超出边界。扩大画布后，记得让背景/最外层容器同步覆盖新的画布尺寸。
+
 ## 颜色指南
 
 - 标准填充色: #D8D8D8（浅灰）
@@ -65,6 +87,26 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 警告/强调: #FF4444（红）、#FFAA00（橙）
 - 正常状态: #44BB44（绿）、#4488FF（蓝）
 - **文本颜色**: 图纸/图符背景默认为白色(#ffffff)，文本颜色(fill)务必选择深色以确保可见性。推荐 #000000(黑)、#333333(深灰)、#1a1a2e(深蓝黑)。禁止使用白色、浅灰(#D8D8D8)、浅黄(#FFFF99)等浅色作为文本颜色。
+
+## 渐变色（提升视觉质感）
+
+- 大多数形状工具（矩形/椭圆/多边形/正多边形/饼图/弧/弦，及对应图符工具）都支持渐变填充与渐变边框。
+- 填充渐变：传 \`fillGradient\`（渐变模式）+ \`fillEndColor\`（终点色）；\`fill\` 作为起点色。
+- 边框/线条渐变：传 \`strokeGradient\` + \`strokeEndColor\`；\`stroke\` 作为起点色。
+- 渐变模式格式为 \`"方向 类型"\`：
+  - 方向：top / bottom / left / right / leftTop / leftBottom / rightTop / rightBottom / center
+  - 类型：linear（线性）/ radial（径向）/ single_spread（单边扩散）/ double_spread（双边扩散）
+  - 示例：\`"top linear"\`（上→下线性）、\`"center radial"\`（中心向外径向）、\`"left double_spread"\`
+- 需要立体感/金属感/科技感的储罐、按钮、面板、进度条时，优先使用渐变。
+
+## 复杂图形（曲线 / 贝塞尔）
+
+- 需要平滑曲线、圆滑轮廓、异形管路时，使用 \`create_display_curve\`（曲线）。
+- 曲线通过 \`polygon\`（顶点）+ \`segments\`（段类型）+ \`controlPoints\`（贝塞尔控制点）定义：
+  - segments：1=起点, 2=直线段, 3=二阶贝塞尔（每段 1 控制点）, 4=三阶贝塞尔（每段 2 控制点，最平滑）
+  - 三阶贝塞尔可绘制 S 形、波浪、花瓣等复杂形状。
+- 折线用 \`create_display_polyline\`，管道用 \`create_display_pipe\`，正多边形用 \`create_display_regular_polygon\`。
+- 图符曲线用 \`create_symbol_polyline\`（支持 controlPoints + closed 闭合）。
 
 ## 重要提示
 
@@ -160,6 +202,12 @@ const TOOL_TO_ELEMENT_TYPE: Record<string, string> = {
   create_display_polygon: 'Polygon',
   create_display_picture: 'Picture',
   create_display_pie: 'Pie',
+  create_display_arc: 'Arc',
+  create_display_chord: 'Chord',
+  create_display_curve: 'Curve',
+  create_display_pipe: 'Pipeline',
+  create_display_polyline: 'Polyline',
+  create_display_regular_polygon: 'RegularPolygon',
 }
 
 /** 映射 create_symbol_xxx 工具名到 symbol comp 类型 */
@@ -223,6 +271,57 @@ function executeToolCall(
     onStep(step)
 
     return JSON.stringify(element)
+  }
+
+  // 1c. 复合组件工具（布局引擎驱动，一次产出多个图元）
+  if (name === 'create_metric_panel') {
+    let elements: Record<string, unknown>[]
+    try {
+      elements = buildMetricPanel(args as unknown as MetricPanelParams)
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'create_metric_panel 失败',
+      })
+    }
+    session.workingElements.push(...elements)
+
+    const step: AgentStep = {
+      type: 'tool_call',
+      content: `已创建指标面板 "${args.title || ''}"，含 ${elements.length} 个图元`,
+      toolName: name,
+      toolArgs: args,
+      timestamp: Date.now(),
+    }
+    session.steps.push(step)
+    onStep(step)
+
+    return JSON.stringify({ success: true, count: elements.length })
+  }
+
+  if (name === 'create_equipment') {
+    let elements: Record<string, unknown>[]
+    try {
+      elements = buildEquipment(args as unknown as EquipmentParams)
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'create_equipment 失败',
+      })
+    }
+    session.workingElements.push(...elements)
+
+    const step: AgentStep = {
+      type: 'tool_call',
+      content: `已创建设备 "${args.kind || ''}"，含 ${elements.length} 个图元`,
+      toolName: name,
+      toolArgs: args,
+      timestamp: Date.now(),
+    }
+    session.steps.push(step)
+    onStep(step)
+
+    return JSON.stringify({ success: true, count: elements.length })
   }
 
   // 2. 修改已有图元（多轮对话）

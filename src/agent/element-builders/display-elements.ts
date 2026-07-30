@@ -41,6 +41,28 @@ export function calcRoatePos(x: number, y: number, w: number, h: number) {
   return { x: x + w / 2, y: y + h / 2 }
 }
 
+/**
+ * 构造颜色对象（支持渐变）。
+ *
+ * 纯色：`{ startColor }`
+ * 渐变：`{ startColor, endColor, gradient }`，其中 gradient 形如 `"top linear"`、
+ * `"center radial"`，由 "方向 类型" 组成：
+ * - 方向：top / bottom / left / right / leftTop / leftBottom / rightTop / rightBottom / center
+ * - 类型：linear / radial / single_spread / double_spread
+ */
+export function buildColorObj(
+  start: string,
+  end?: string,
+  gradient?: string,
+): Record<string, string> {
+  const color: Record<string, string> = { startColor: start }
+  if (gradient) {
+    color.endColor = end || start
+    color.gradient = gradient
+  }
+  return color
+}
+
 // ============================================================
 // 通用基础字段（所有图纸图元共用）
 // ============================================================
@@ -83,6 +105,10 @@ export interface RectParams {
   stroke?: string
   borderWidth?: number
   cornerRadius?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
   name?: string
   layer?: string
   zIndex?: number
@@ -95,6 +121,10 @@ export function buildRect(params: RectParams) {
     stroke = '#979797',
     borderWidth = 1,
     cornerRadius,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
     name,
     layer = '1',
     zIndex = 0,
@@ -113,8 +143,8 @@ export function buildRect(params: RectParams) {
     _originInfo: { width, height },
     localRect,
     roatePos,
-    fillColor: { startColor: fill },
-    borderColor: { startColor: stroke },
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
     textColor: { startColor: fill },
     borderWidth,
     zIndex,
@@ -136,6 +166,10 @@ export interface EllipseParams {
   fill?: string
   stroke?: string
   borderWidth?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
   name?: string
   layer?: string
   zIndex?: number
@@ -147,6 +181,10 @@ export function buildEllipse(params: EllipseParams) {
     fill = '#D8D8D8',
     stroke = '#979797',
     borderWidth = 1,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
     name,
     layer = '1',
     zIndex = 0,
@@ -164,8 +202,8 @@ export function buildEllipse(params: EllipseParams) {
     _originInfo: { width, height },
     localRect,
     roatePos,
-    fillColor: { startColor: fill },
-    borderColor: { startColor: stroke },
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
     textColor: { startColor: fill },
     borderWidth,
     zIndex,
@@ -296,6 +334,10 @@ export interface PolygonParams {
   fill?: string
   stroke?: string
   borderWidth?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
   name?: string
   layer?: string
   zIndex?: number
@@ -307,6 +349,10 @@ export function buildPolygon(params: PolygonParams) {
     fill = '#D8D8D8',
     stroke = '#979797',
     borderWidth = 1,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
     name,
     layer = '1',
     zIndex = 0,
@@ -334,8 +380,8 @@ export function buildPolygon(params: PolygonParams) {
     localRect,
     roatePos,
     points,
-    fillColor: { startColor: fill },
-    borderColor: { startColor: stroke },
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
     textColor: { startColor: fill },
     borderWidth,
     zIndex,
@@ -385,6 +431,10 @@ export interface PieParams {
   fill?: string
   stroke?: string
   borderWidth?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
   name?: string
   layer?: string
   zIndex?: number
@@ -397,6 +447,10 @@ export function buildPie(params: PieParams) {
     fill = '#D8D8D8',
     stroke = '#979797',
     borderWidth = 1,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
     name,
     layer = '1',
     zIndex = 0,
@@ -420,8 +474,333 @@ export function buildPie(params: PieParams) {
     roatePos,
     cx, cy, radius,
     startAngle, endAngle,
-    fillColor: { startColor: fill },
-    borderColor: { startColor: stroke },
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
+    textColor: { startColor: fill },
+    borderWidth,
+    zIndex,
+  }
+}
+
+// ============================================================
+// 弧 / 弦（Arc / Chord）
+// ============================================================
+
+export interface ArcParams {
+  width: number
+  height: number
+  startAngle: number
+  endAngle: number
+  x: number
+  y: number
+  fill?: string
+  stroke?: string
+  borderWidth?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
+  name?: string
+  layer?: string
+  zIndex?: number
+}
+
+/** 构造弧/弦。弦（closePath=true）用直线连接弧两端形成闭合区域。 */
+function buildArcLike(params: ArcParams, closePath: boolean) {
+  const {
+    width, height, startAngle, endAngle, x, y,
+    fill = closePath ? '#D8D8D8' : '#D8D8D800',
+    stroke = '#979797',
+    borderWidth = 1,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
+    name,
+    layer = '1',
+    zIndex = 0,
+  } = params
+
+  const type = closePath ? 'Chord' : 'Arc'
+  const localRect = calcLocalRect(x, y, width, height)
+  const roatePos = calcRoatePos(x, y, width, height)
+
+  const element: Record<string, unknown> = {
+    id: generateId(),
+    ...getBaseFields(type, layer),
+    name: name || (closePath ? '弦' : '弧'),
+    width,
+    height,
+    _originInfo: { width, height },
+    localRect,
+    roatePos,
+    startAngle,
+    endAngle,
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
+    textColor: { startColor: fill },
+    borderWidth,
+    zIndex,
+  }
+
+  if (closePath) element.closePath = true
+
+  return element
+}
+
+export function buildArc(params: ArcParams) {
+  return buildArcLike(params, false)
+}
+
+export function buildChord(params: ArcParams) {
+  return buildArcLike(params, true)
+}
+
+// ============================================================
+// 曲线（Curve）— 支持直线段与贝塞尔曲线段
+// ============================================================
+
+export interface CurveParams {
+  /** 控制点坐标数组 [{x,y}, ...] */
+  polygon: Array<{ x: number; y: number }>
+  /**
+   * 段类型数组。段类型编码：
+   * 1=moveTo 起点, 2=lineTo 直线段, 3=quaraticCurveTo 二阶贝塞尔, 4=bezierCurveTo 三阶贝塞尔, 5=closePath 闭合。
+   * 长度 = polygon.length - 1（首点隐含 moveTo）。
+   */
+  segments: number[]
+  /** 贝塞尔控制点扁平数组 [cx1, cy1, cx2, cy2, ...]，二阶每段 1 个点，三阶每段 2 个点 */
+  controlPoints?: number[]
+  stroke?: string
+  borderWidth?: number
+  strokeEndColor?: string
+  strokeGradient?: string
+  name?: string
+  layer?: string
+  zIndex?: number
+}
+
+export function buildCurve(params: CurveParams) {
+  const {
+    polygon,
+    segments,
+    controlPoints = [],
+    stroke = '#979797',
+    borderWidth = 1,
+    strokeEndColor,
+    strokeGradient,
+    name,
+    layer = '1',
+    zIndex = 0,
+  } = params
+
+  const xs = polygon.map(p => p.x)
+  const ys = polygon.map(p => p.y)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  const width = maxX - minX || 1
+  const height = maxY - minY || 1
+
+  const localRect = calcLocalRect(minX, minY, width, height)
+  const roatePos = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+
+  return {
+    id: generateId(),
+    ...getBaseFields('Curve', layer),
+    name: name || '曲线',
+    width,
+    height,
+    _originInfo: { width, height },
+    localRect,
+    roatePos,
+    polygon,
+    segments,
+    controlPoints,
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
+    fillColor: { startColor: 'rgba(255,255,255,0)' },
+    borderWidth,
+    zIndex,
+  }
+}
+
+// ============================================================
+// 管道（Pipeline）
+// ============================================================
+
+export interface PipeParams {
+  polygon: Array<{ x: number; y: number }>
+  stroke?: string
+  borderWidth?: number
+  borderStyle?: number
+  lineCap?: 'butt' | 'round' | 'square'
+  lineJoin?: 'round' | 'bevel' | 'miter'
+  strokeEndColor?: string
+  strokeGradient?: string
+  name?: string
+  layer?: string
+  zIndex?: number
+}
+
+export function buildPipe(params: PipeParams) {
+  const {
+    polygon,
+    stroke = '#929292',
+    borderWidth = 10,
+    borderStyle = 1,
+    lineCap = 'butt',
+    lineJoin = 'round',
+    strokeEndColor,
+    strokeGradient,
+    name,
+    layer = '1',
+    zIndex = 0,
+  } = params
+
+  const xs = polygon.map(p => p.x)
+  const ys = polygon.map(p => p.y)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  const width = maxX - minX || 1
+  const height = maxY - minY || 1
+
+  const localRect = calcLocalRect(minX, minY, width, height)
+  const roatePos = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+
+  return {
+    id: generateId(),
+    ...getBaseFields('Pipeline', layer),
+    name: name || '管道',
+    width,
+    height,
+    _originInfo: { width, height },
+    localRect,
+    roatePos,
+    polygon,
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
+    fillColor: { startColor: 'rgba(255,255,255,0)' },
+    borderWidth,
+    borderStyle,
+    lineCap,
+    lineJoin,
+    zIndex,
+  }
+}
+
+// ============================================================
+// 折线（Polyline）
+// ============================================================
+
+export interface PolylineParams {
+  polygon: Array<{ x: number; y: number }>
+  stroke?: string
+  borderWidth?: number
+  strokeEndColor?: string
+  strokeGradient?: string
+  name?: string
+  layer?: string
+  zIndex?: number
+}
+
+export function buildPolyline(params: PolylineParams) {
+  const {
+    polygon,
+    stroke = '#979797',
+    borderWidth = 1,
+    strokeEndColor,
+    strokeGradient,
+    name,
+    layer = '1',
+    zIndex = 0,
+  } = params
+
+  const xs = polygon.map(p => p.x)
+  const ys = polygon.map(p => p.y)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const maxX = Math.max(...xs)
+  const maxY = Math.max(...ys)
+  const width = maxX - minX || 1
+  const height = maxY - minY || 1
+
+  const localRect = calcLocalRect(minX, minY, width, height)
+  const roatePos = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+
+  return {
+    id: generateId(),
+    ...getBaseFields('Polyline', layer),
+    name: name || '折线',
+    width,
+    height,
+    _originInfo: { width, height },
+    localRect,
+    roatePos,
+    polygon,
+    close: false,
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
+    fillColor: { startColor: 'rgba(255,255,255,0)' },
+    borderWidth,
+    zIndex,
+  }
+}
+
+// ============================================================
+// 正多边形（RegularPolygon）
+// ============================================================
+
+export interface RegularPolygonParams {
+  sides: number
+  radius: number
+  x: number
+  y: number
+  fill?: string
+  stroke?: string
+  borderWidth?: number
+  fillEndColor?: string
+  fillGradient?: string
+  strokeEndColor?: string
+  strokeGradient?: string
+  name?: string
+  layer?: string
+  zIndex?: number
+}
+
+export function buildRegularPolygon(params: RegularPolygonParams) {
+  const {
+    sides, radius, x, y,
+    fill = '#D8D8D8',
+    stroke = '#979797',
+    borderWidth = 1,
+    fillEndColor,
+    fillGradient,
+    strokeEndColor,
+    strokeGradient,
+    name,
+    layer = '1',
+    zIndex = 0,
+  } = params
+
+  const width = radius * 2
+  const height = radius * 2
+  const localRect = calcLocalRect(x, y, width, height)
+  const roatePos = calcRoatePos(x, y, width, height)
+
+  return {
+    id: generateId(),
+    ...getBaseFields('RegularPolygon', layer),
+    name: name || '正多边形',
+    width,
+    height,
+    _originInfo: { width, height },
+    localRect,
+    roatePos,
+    sides,
+    radius,
+    fillColor: buildColorObj(fill, fillEndColor, fillGradient),
+    borderColor: buildColorObj(stroke, strokeEndColor, strokeGradient),
     textColor: { startColor: fill },
     borderWidth,
     zIndex,
@@ -453,6 +832,18 @@ export function buildDisplayElement(
       return buildPicture(params as unknown as PictureParams)
     case 'Pie':
       return buildPie(params as unknown as PieParams)
+    case 'Arc':
+      return buildArc(params as unknown as ArcParams)
+    case 'Chord':
+      return buildChord(params as unknown as ArcParams)
+    case 'Curve':
+      return buildCurve(params as unknown as CurveParams)
+    case 'Pipeline':
+      return buildPipe(params as unknown as PipeParams)
+    case 'Polyline':
+      return buildPolyline(params as unknown as PolylineParams)
+    case 'RegularPolygon':
+      return buildRegularPolygon(params as unknown as RegularPolygonParams)
     default:
       throw new Error(`不支持的图纸图元类型: ${type}`)
   }
@@ -486,6 +877,36 @@ function generateCode(): string {
   return code
 }
 
+/**
+ * 判断图元是否为覆盖整块画布的背景/底板。
+ * 用于组装时把背景下沉到最底层，避免因创建顺序靠后而遮挡显示内容。
+ */
+function isBackgroundElement(
+  el: Record<string, unknown>,
+  pageWidth: number,
+  pageHeight: number,
+): boolean {
+  // 只有实心形状类才可能作为背景底板
+  if (!['Rectangle', 'RoundRect', 'Polygon'].includes(el.type as string)) return false
+
+  const rect = el.localRect as Array<{ x: number; y: number }> | undefined
+  const width = typeof el.width === 'number' ? el.width : 0
+  const height = typeof el.height === 'number' ? el.height : 0
+  if (!Array.isArray(rect) || rect.length === 0 || width <= 0 || height <= 0) return false
+
+  const x = rect[0].x
+  const y = rect[0].y
+  const canvasArea = pageWidth * pageHeight
+  if (canvasArea <= 0) return false
+
+  // 覆盖 ≥ 85% 画布面积，且左上角贴近原点，视为背景底板
+  return (
+    width * height >= canvasArea * 0.85 &&
+    x <= pageWidth * 0.1 &&
+    y <= pageHeight * 0.1
+  )
+}
+
 /** 组装完整图纸 document JSON */
 export function buildDisplayDocument(params: DisplayDocumentParams) {
   const {
@@ -502,8 +923,14 @@ export function buildDisplayDocument(params: DisplayDocumentParams) {
     scadaType = '',
   } = params
 
-  // zIndex 重排
-  const elements = elementsData.map((el, i) => ({
+  // zIndex 重排：先把覆盖整块画布的背景/底板下沉到最底层，其余保持创建顺序（稳定排序），
+  // 避免背景因创建顺序靠后而遮挡显示内容。
+  const ordered = elementsData
+    .map((el, i) => ({ el, i, bg: isBackgroundElement(el, pageWidth, pageHeight) }))
+    .sort((a, b) => (a.bg === b.bg ? a.i - b.i : a.bg ? -1 : 1))
+    .map(entry => entry.el)
+
+  const elements = ordered.map((el, i) => ({
     ...el,
     zIndex: i,
   }))

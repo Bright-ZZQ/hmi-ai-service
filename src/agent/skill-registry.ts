@@ -14,6 +14,32 @@
 import type { EditorType, SkillRegistryEntry, ToolDefinition } from '../types'
 
 // ============================================================
+// 可复用参数片段 — 渐变色
+// ============================================================
+
+/**
+ * 渐变模式字符串格式：`"方向 类型"`，例如 "top linear"、"center radial"、"left double_spread"。
+ * - 方向：top / bottom / left / right / leftTop / leftBottom / rightTop / rightBottom / center
+ * - 类型：linear（线性）/ radial（径向）/ single_spread（单边扩散）/ double_spread（双边扩散）
+ * 省略渐变模式则为纯色。
+ */
+const GRADIENT_HINT = '渐变模式，形如 "top linear"、"center radial"。方向: top/bottom/left/right/leftTop/leftBottom/rightTop/rightBottom/center；类型: linear/radial/single_spread/double_spread。省略则为纯色'
+
+/** 填充 + 边框渐变参数（用于有填充的形状） */
+const SHAPE_GRADIENT_PROPS = {
+  fillEndColor: { type: 'string', description: '填充渐变终点色（配合 fillGradient 使用），省略则等于起点色' },
+  fillGradient: { type: 'string', description: `填充${GRADIENT_HINT}` },
+  strokeEndColor: { type: 'string', description: '边框渐变终点色（配合 strokeGradient 使用），省略则等于起点色' },
+  strokeGradient: { type: 'string', description: `边框${GRADIENT_HINT}` },
+} as const
+
+/** 仅边框渐变参数（用于线条/曲线/管道等无填充形状） */
+const STROKE_GRADIENT_PROPS = {
+  strokeEndColor: { type: 'string', description: '线条渐变终点色（配合 strokeGradient 使用），省略则等于起点色' },
+  strokeGradient: { type: 'string', description: `线条${GRADIENT_HINT}` },
+} as const
+
+// ============================================================
 // Display 图纸组 — 图元创建工具
 // ============================================================
 
@@ -36,6 +62,7 @@ const CREATE_DISPLAY_RECT: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           cornerRadius: { type: 'number', description: '圆角大小(px)，指定后类型变为 RoundRect' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -64,6 +91,7 @@ const CREATE_DISPLAY_ELLIPSE: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -160,6 +188,7 @@ const CREATE_DISPLAY_POLYGON: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -213,6 +242,7 @@ const CREATE_DISPLAY_PIE: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -299,6 +329,7 @@ const CREATE_DISPLAY_ARC: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D800（透明）' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -329,6 +360,7 @@ const CREATE_DISPLAY_CHORD: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -345,9 +377,15 @@ const CREATE_DISPLAY_CURVE: SkillRegistryEntry = {
     type: 'function',
     function: {
       name: 'create_display_curve',
-      description: `创建图纸曲线图元（Curve）。通过控制点数组和段类型数组定义曲线路径。
-segments 值：1=直线段，2=曲线段。曲线没有 fillColor 和 textColor 字段。
-返回完整的 elements 格式 JSON 对象，type 为 "Curve"。`,
+      description: `创建图纸曲线图元（Curve）。支持直线段与贝塞尔曲线段混合，可绘制平滑的复杂曲线路径。
+通过顶点数组 polygon 和段类型数组 segments 定义路径。segments 编码：
+- 1=moveTo（起点，首点隐含）
+- 2=lineTo（直线段）
+- 3=quaraticCurveTo（二阶贝塞尔，每段需 1 个控制点）
+- 4=bezierCurveTo（三阶贝塞尔，每段需 2 个控制点，最平滑）
+贝塞尔控制点按顺序放入 controlPoints 扁平数组 [cx1,cy1,cx2,cy2,...]。
+例如画一条平滑 S 曲线：polygon=[{x:0,y:100},{x:200,y:100}], segments=[4], controlPoints=[60,0,140,200]。
+曲线无填充，仅描边。返回完整的 elements 格式 JSON 对象，type 为 "Curve"。`,
       parameters: {
         type: 'object',
         properties: {
@@ -356,20 +394,26 @@ segments 值：1=直线段，2=曲线段。曲线没有 fillColor 和 textColor 
             items: {
               type: 'object',
               properties: {
-                x: { type: 'number', description: '控制点 x 坐标' },
-                y: { type: 'number', description: '控制点 y 坐标' },
+                x: { type: 'number', description: '顶点 x 坐标' },
+                y: { type: 'number', description: '顶点 y 坐标' },
               },
               required: ['x', 'y'],
             },
-            description: '控制点坐标数组 [{x,y}, ...]',
+            description: '路径顶点坐标数组 [{x,y}, ...]',
           },
           segments: {
             type: 'array',
             items: { type: 'number' },
-            description: '段类型数组，如 [1, 2, 2, 2]。1=直线段，2=曲线段，长度 = polygon长度 - 1',
+            description: '段类型数组，长度 = polygon长度 - 1。1=直线, 2=直线段, 3=二阶贝塞尔, 4=三阶贝塞尔',
+          },
+          controlPoints: {
+            type: 'array',
+            items: { type: 'number' },
+            description: '贝塞尔控制点扁平数组 [cx1,cy1,cx2,cy2,...]。二阶每段 1 个点(2 值)，三阶每段 2 个点(4 值)，纯直线时省略',
           },
           stroke: { type: 'string', description: '线条颜色，默认 #979797' },
           borderWidth: { type: 'number', description: '线宽，默认 1' },
+          ...STROKE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -408,6 +452,7 @@ const CREATE_DISPLAY_PIPE: SkillRegistryEntry = {
           borderStyle: { type: 'number', description: '线型，1=实线（默认）' },
           lineCap: { type: 'string', enum: ['butt', 'round', 'square'], description: '端点样式，默认 butt' },
           lineJoin: { type: 'string', enum: ['round', 'bevel', 'miter'], description: '连接点样式，默认 round' },
+          ...STROKE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -443,6 +488,7 @@ const CREATE_DISPLAY_POLYLINE: SkillRegistryEntry = {
           },
           stroke: { type: 'string', description: '线条颜色，默认 #979797' },
           borderWidth: { type: 'number', description: '线宽，默认 1' },
+          ...STROKE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -472,11 +518,87 @@ width 和 height = radius × 2。如 sides=3 为等边三角形，sides=6 为正
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
         },
         required: ['sides', 'radius', 'x', 'y'],
+      },
+    },
+  },
+}
+
+// ============================================================
+// Display 图纸组 — 复合组件（布局引擎驱动，坐标自动计算）
+// ============================================================
+
+const CREATE_METRIC_PANEL: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'create_metric_panel',
+      description: `创建**指标数据面板**（标题 + 多行"标签/数值/状态灯"）。这是展示监控数据的首选工具。
+**重要**：内部每一行的坐标由布局引擎自动、确定性计算，保证行间不重叠、不越界、对齐整齐。
+你**只需给出数据**（标题 + rows），**不要**再用多个 create_display_text 手工拼表格。
+一次调用产出整块面板（背景 + 所有文本 + 状态灯）。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: '面板左上角 x 坐标(px)' },
+          y: { type: 'number', description: '面板左上角 y 坐标(px)' },
+          width: { type: 'number', description: '面板宽度(px)' },
+          height: { type: 'number', description: '面板高度(px)，省略则按行数自适应' },
+          title: { type: 'string', description: '面板标题' },
+          rows: {
+            type: 'array',
+            description: '指标行数组，每项 {label, value, status?}',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', description: '指标名称（左列）' },
+                value: { type: 'string', description: '指标数值（右列，含单位）' },
+                status: { type: 'string', enum: ['normal', 'warning', 'alarm'], description: '状态灯颜色：normal绿/warning橙/alarm红，省略则不显示状态灯' },
+              },
+              required: ['label', 'value'],
+            },
+          },
+          titleColor: { type: 'string', description: '标题颜色，默认 #00d4ff' },
+          labelColor: { type: 'string', description: '标签颜色，默认 #aabbcc' },
+          valueColor: { type: 'string', description: '数值颜色，默认 #00ff88' },
+          panelFill: { type: 'string', description: '面板背景色，默认 #101830' },
+          panelStroke: { type: 'string', description: '面板边框色，默认 #1e3a50' },
+          valueWidth: { type: 'number', description: '数值列宽度，默认 120' },
+        },
+        required: ['x', 'y', 'width', 'title', 'rows'],
+      },
+    },
+  },
+}
+
+const CREATE_EQUIPMENT: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'create_equipment',
+      description: `创建**工艺设备图符**（比例固定、形状可辨识）。用于绘制储罐、塔器、炉子等设备。
+**重要**：设备由多个原语按正确比例自动组合，**不要**自己用 create_display_rect/ellipse 拼设备。
+一次调用产出整个设备（主体 + 封头/锥底 + 内部结构）。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['tank', 'tower', 'furnace', 'column'], description: '设备类型：tank储罐/tower吸收塔转化塔(带填料层)/furnace焚烧炉沸腾炉(带火焰锥底)/column精馏催化塔柱(带塔板)' },
+          x: { type: 'number', description: '设备包围盒左上角 x 坐标(px)' },
+          y: { type: 'number', description: '设备包围盒左上角 y 坐标(px)' },
+          width: { type: 'number', description: '设备宽度(px)' },
+          height: { type: 'number', description: '设备高度(px)' },
+          fill: { type: 'string', description: '主体填充色，默认 #1a2035' },
+          stroke: { type: 'string', description: '主体边框色，默认 #3a6080' },
+          name: { type: 'string', description: '名称前缀，默认按类型' },
+        },
+        required: ['kind', 'x', 'y', 'width', 'height'],
       },
     },
   },
@@ -504,8 +626,8 @@ const ASSEMBLE_DISPLAY: SkillRegistryEntry = {
             type: 'array',
             description: '之前 create_display_* 工具返回的图元 JSON 对象数组',
           },
-          pageWidth: { type: 'number', description: '画布宽度(px)，默认 1880' },
-          pageHeight: { type: 'number', description: '画布高度(px)，默认 962' },
+          pageWidth: { type: 'number', description: '画布宽度(px)，默认 1880。当图元较多、按合理间距排布会越界或重叠时，必须调大此值（如 2400、2560）以容纳全部内容，避免拥挤重叠' },
+          pageHeight: { type: 'number', description: '画布高度(px)，默认 962。当纵向内容放不下时，必须调大此值（如 1350、1440）以容纳全部内容，避免重叠' },
           bgColor: { type: 'string', description: '背景色，默认 #ffffff' },
           author: { type: 'string', description: '作者，默认空' },
           company: { type: 'string', description: '公司，默认空' },
@@ -743,6 +865,7 @@ const CREATE_SYMBOL_RECT: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           cornerRadius: { type: 'number', description: '圆角半径(px)，不指定时 shape=Rectangle，指定后 shape=RoundRect' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -775,6 +898,7 @@ const CREATE_SYMBOL_ELLIPSE: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           strokeWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -883,6 +1007,7 @@ const CREATE_SYMBOL_POLYGON: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           strokeWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -915,6 +1040,7 @@ const CREATE_SYMBOL_POLYLINE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '线条颜色，默认 #979797' },
           strokeWidth: { type: 'number', description: '线宽，默认 1' },
           hitStrokeWidth: { type: 'number', description: '命中检测宽度，默认约 3.08' },
+          ...STROKE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -950,6 +1076,7 @@ const CREATE_SYMBOL_ARC: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D800（透明）' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           strokeWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -984,6 +1111,7 @@ const CREATE_SYMBOL_CHORD: SkillRegistryEntry = {
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           strokeWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -1018,6 +1146,7 @@ x/y 为包围盒左上角坐标（与 Arc/Chord 的圆心坐标不同）。返�
           fill: { type: 'string', description: '填充色，默认 #D8D8D8' },
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           strokeWidth: { type: 'number', description: '边框宽度，默认 1' },
+          ...SHAPE_GRADIENT_PROPS,
           shadowOpacity: { type: 'number', description: '阴影不透明度，默认 0' },
           shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
           shadowOffsetX: { type: 'number', description: '阴影 x 偏移，默认 3' },
@@ -1084,6 +1213,10 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   CREATE_DISPLAY_PIPE,
   CREATE_DISPLAY_POLYLINE,
   CREATE_DISPLAY_REGULAR_POLYGON,
+
+  // Display 图纸组 — 复合组件（布局引擎驱动）
+  CREATE_METRIC_PANEL,
+  CREATE_EQUIPMENT,
 
   // Display 图纸组 — 已有图元编辑
   UPDATE_DISPLAY_ELEMENT,
