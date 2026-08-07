@@ -37,17 +37,29 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no') // 禁用 nginx 缓冲
 
+  const streamId = globalThis.crypto.randomUUID()
+  let seq = 0
+
   // SSE 发送工具函数
   const sendSSE = (event: SSEEvent) => {
-    const data = JSON.stringify(event)
+    if (res.writableEnded) return
+    const data = JSON.stringify({ ...event, streamId, seq: seq++ })
     res.write(`event: ${event.type}\ndata: ${data}\n\n`)
   }
+
+  // 心跳注释帧，避免长任务被代理按空闲超时掐断
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n')
+  }, 15000)
+  const stopHeartbeat = () => clearInterval(heartbeat)
+  res.on('close', stopHeartbeat)
 
   try {
     const config = loadConfig()
 
     if (!config.agent.modelApiKey) {
       sendSSE({ type: 'error', content: 'AI 模型 API Key 未配置，请检查 .env 文件' })
+      stopHeartbeat()
       res.end()
       return
     }
@@ -73,11 +85,13 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
       })
     }
 
+    stopHeartbeat()
     res.end()
   } catch (err) {
     const message = err instanceof Error ? err.message : '服务器内部错误'
     console.error('[AiGenerate] 异常:', err)
     sendSSE({ type: 'error', content: message })
+    stopHeartbeat()
     res.end()
   }
 })

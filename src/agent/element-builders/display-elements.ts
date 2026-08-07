@@ -881,7 +881,7 @@ function generateCode(): string {
  * 判断图元是否为覆盖整块画布的背景/底板。
  * 用于组装时把背景下沉到最底层，避免因创建顺序靠后而遮挡显示内容。
  */
-function isBackgroundElement(
+export function isBackgroundElement(
   el: Record<string, unknown>,
   pageWidth: number,
   pageHeight: number,

@@ -14,7 +14,7 @@
  */
 
 import { getToolsForType, isAssemblyTool } from './skill-registry'
-import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment } from './element-builders'
+import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, isBackgroundElement } from './element-builders'
 import type { MetricPanelParams, EquipmentParams } from './element-builders'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
@@ -25,6 +25,8 @@ import type {
   AgentStep,
   ToolCall,
   SSEEvent,
+  StreamCanvas,
+  StreamMetrics,
   AgentContext,
 } from '../types'
 
@@ -131,6 +133,45 @@ interface SessionState {
   steps: AgentStep[]
   finalJson?: Record<string, unknown>
   currentJson?: Record<string, unknown>
+  /** 流式绘制用的画布信息；最终以 assemble 结果为准 */
+  canvas: StreamCanvas
+}
+
+const DEFAULT_DISPLAY_CANVAS: StreamCanvas = {
+  name: 'AI生成图纸',
+  pageWidth: 1880,
+  pageHeight: 962,
+  bgColor: '#ffffff',
+}
+
+const DEFAULT_SYMBOL_CANVAS: StreamCanvas = {
+  name: 'AI生成图符',
+  pageWidth: 800,
+  pageHeight: 600,
+  bgColor: 'rgba(255, 255, 255, 1)',
+}
+
+/** 多轮修改时沿用上一轮画布，首轮用默认值；P2 引入 begin_* 工具后由模型显式声明。 */
+function getCanvasFromJson(
+  editorType: EditorType,
+  json?: Record<string, unknown>,
+): StreamCanvas {
+  if (editorType === 'display') {
+    const document = json?.document as Record<string, unknown> | undefined
+    const pageProperty = document?.pageProperty as Record<string, unknown> | undefined
+    return {
+      name: typeof document?.name === 'string' ? document.name : DEFAULT_DISPLAY_CANVAS.name,
+      pageWidth: typeof pageProperty?.pageWidth === 'number' ? pageProperty.pageWidth : DEFAULT_DISPLAY_CANVAS.pageWidth,
+      pageHeight: typeof pageProperty?.pageHeight === 'number' ? pageProperty.pageHeight : DEFAULT_DISPLAY_CANVAS.pageHeight,
+      bgColor: typeof pageProperty?.bgColor === 'string' ? pageProperty.bgColor : DEFAULT_DISPLAY_CANVAS.bgColor,
+    }
+  }
+  return {
+    name: typeof json?.name === 'string' ? json.name : DEFAULT_SYMBOL_CANVAS.name,
+    pageWidth: typeof json?.width === 'number' ? json.width : DEFAULT_SYMBOL_CANVAS.pageWidth,
+    pageHeight: typeof json?.height === 'number' ? json.height : DEFAULT_SYMBOL_CANVAS.pageHeight,
+    bgColor: typeof json?.background === 'string' ? json.background : DEFAULT_SYMBOL_CANVAS.bgColor,
+  }
 }
 
 function getElementsFromJson(
@@ -151,6 +192,7 @@ function createSession(editorType: EditorType, currentJson?: Record<string, unkn
     workingElements: getElementsFromJson(editorType, currentJson),
     steps: [],
     currentJson,
+    canvas: getCanvasFromJson(editorType, currentJson),
   }
 }
 
@@ -232,9 +274,21 @@ function executeToolCall(
   args: Record<string, unknown>,
   session: SessionState,
   onStep: (step: AgentStep) => void,
+  emit: (event: SSEEvent) => void,
 ): string {
   const elementType = TOOL_TO_ELEMENT_TYPE[name]
   const symbolType = TOOL_TO_SYMBOL_TYPE[name]
+
+  // 只有整批都是全画布底板时才下沉，避免复合组件的混合批次被误判
+  const emitElements = (elements: Record<string, unknown>[]) => {
+    if (elements.length === 0) return
+    emit({
+      type: 'element',
+      elements,
+      isBackground: session.editorType === 'display'
+        && elements.every(el => isBackgroundElement(el, session.canvas.pageWidth, session.canvas.pageHeight)),
+    })
+  }
 
   // 1. 图元创建工具
   if (elementType) {
@@ -250,6 +304,7 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emitElements([element])
 
     return JSON.stringify(element)
   }
@@ -269,6 +324,7 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emitElements([element])
 
     return JSON.stringify(element)
   }
@@ -295,6 +351,7 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emitElements(elements)
 
     return JSON.stringify({ success: true, count: elements.length })
   }
@@ -320,6 +377,7 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emitElements(elements)
 
     return JSON.stringify({ success: true, count: elements.length })
   }
@@ -354,6 +412,10 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emit({
+      type: 'element_patch',
+      patch: { op: 'update', target, element: session.workingElements[index] },
+    })
     return JSON.stringify({ success: true, element: session.workingElements[index] })
   }
 
@@ -374,6 +436,7 @@ function executeToolCall(
     }
     session.steps.push(step)
     onStep(step)
+    emit({ type: 'element_patch', patch: { op: 'delete', target } })
     return JSON.stringify({ success: true, removed })
   }
 
@@ -409,6 +472,8 @@ function executeToolCall(
     }
 
     session.finalJson = document
+    session.canvas = getCanvasFromJson('display', document)
+    emit({ type: 'canvas', canvas: session.canvas })
 
     const step: AgentStep = {
       type: 'tool_call',
@@ -456,6 +521,8 @@ function executeToolCall(
     } : builtSymbol
 
     session.finalJson = symbol
+    session.canvas = getCanvasFromJson('symbol', symbol)
+    emit({ type: 'canvas', canvas: session.canvas })
 
     const step: AgentStep = {
       type: 'tool_call',
@@ -576,6 +643,29 @@ export async function runAgentLoop(
   const tools = getToolsForType(editorType)
   const maxRetries = config.maxRetries
 
+  const startedAt = Date.now()
+  let modelMs = 0
+  let toolMs = 0
+  let rounds = 0
+  let toolCalls = 0
+
+  const buildMetrics = (): StreamMetrics => {
+    const totalMs = Date.now() - startedAt
+    return {
+      modelMs,
+      // 总耗时扣掉等待模型的部分，即服务端自身开销
+      serverMs: Math.max(0, totalMs - modelMs),
+      toolMs,
+      totalMs,
+      rounds,
+      toolCalls,
+    }
+  }
+  const emitMetrics = () => onSSEEvent({ type: 'metrics', metrics: buildMetrics() })
+
+  // 先下发画布，让前端在收到首个图元前就建好尺寸与背景
+  onSSEEvent({ type: 'canvas', canvas: session.canvas })
+
   // 步骤回调
   const onStep = (step: AgentStep) => {
     if (step.type === 'tool_call') {
@@ -588,6 +678,40 @@ export async function runAgentLoop(
     } else if (step.type === 'thinking') {
       onSSEEvent({ type: 'thinking', content: step.content })
     }
+  }
+
+  /**
+   * 模型停止调用工具但未显式组装时的兜底：直接用工作区已累积的图元组装。
+   * 避免模型“忘记”调 assemble 就整单失败。
+   */
+  const finishWithAutoAssemble = (): AgentResult | null => {
+    // toolCalls === 0 说明模型什么都没做（如反问澄清），多轮修改时不能把原图当成新结果返回
+    if (session.finalJson || toolCalls === 0 || session.workingElements.length === 0) return null
+
+    const assembleName = editorType === 'display' ? 'assemble_display' : 'assemble_symbol'
+    const nameArg = editorType === 'display'
+      ? { pageName: session.canvas.name }
+      : { symbolName: session.canvas.name }
+
+    const startedAt = Date.now()
+    executeToolCall(assembleName, nameArg, session, onStep, onSSEEvent)
+    toolMs += Date.now() - startedAt
+    toolCalls++
+
+    if (!session.finalJson) return null
+    if (validateOutput(session.finalJson, editorType).length > 0) {
+      // 兜底结果不合法则不占用结果位，交回原有重试/失败路径
+      session.finalJson = undefined
+      return null
+    }
+
+    session.steps.push({ type: 'done', content: '生成完成（服务端兜底组装）', timestamp: Date.now() })
+    const metrics = buildMetrics()
+    onSSEEvent({ type: 'result', json: session.finalJson })
+    onSSEEvent({ type: 'metrics', metrics })
+    onSSEEvent({ type: 'done' })
+
+    return { success: true, json: session.finalJson, steps: session.steps, metrics }
   }
 
   // 构建初始消息
@@ -618,8 +742,49 @@ export async function runAgentLoop(
     session.steps.push(thinkingStep)
     onStep(thinkingStep)
 
+    // 流内派发：模型每吐完一个 tool_call 就立即执行并推送图元，不必等整轮结束
+    const streamedResults = new Map<string, string>()
+    const baseElementCount = session.workingElements.length
+    const baseToolCalls = toolCalls
+    // 流内工具是在读流循环里跑的，会被算进 callModel 的 elapsedMs，需单独记账后扣除
+    let streamToolMs = 0
+
+    const dispatch: StreamDispatch = {
+      onToolCall: (tc) => {
+        let args: Record<string, unknown> = {}
+        try {
+          args = JSON.parse(tc.function.arguments || '{}')
+        } catch {
+          args = {}
+        }
+        const startedAt = Date.now()
+        streamedResults.set(
+          tc.id,
+          executeToolCall(tc.function.name, args, session, onStep, onSSEEvent),
+        )
+        const cost = Date.now() - startedAt
+        toolMs += cost
+        streamToolMs += cost
+        toolCalls++
+      },
+      // 模型 API 中途失败重试时，撤销本次尝试已提交的图元，并让前端重画已有部分
+      onRollback: () => {
+        session.workingElements.length = baseElementCount
+        session.finalJson = undefined
+        streamedResults.clear()
+        toolCalls = baseToolCalls
+        onSSEEvent({ type: 'stream_reset' })
+        if (session.workingElements.length > 0) {
+          onSSEEvent({ type: 'element', elements: session.workingElements })
+        }
+      },
+    }
+
     // 调用模型 API（流式）
-    const { response, retryCount } = await callModel(config, messages, tools, onSSEEvent)
+    const { response, retryCount, elapsedMs } = await callModel(config, messages, tools, onSSEEvent, dispatch)
+    modelMs += Math.max(0, elapsedMs - streamToolMs)
+    rounds++
+    emitMetrics()
 
     if (!response) {
       const retried = retryCount > 0 ? `（已重试 ${retryCount} 次）` : ''
@@ -627,6 +792,7 @@ export async function runAgentLoop(
         success: false,
         error: `模型 API 调用失败${retried}`,
         steps: session.steps,
+        metrics: buildMetrics(),
       }
     }
 
@@ -636,6 +802,7 @@ export async function runAgentLoop(
         success: false,
         error: '模型返回为空',
         steps: session.steps,
+        metrics: buildMetrics(),
       }
     }
 
@@ -648,16 +815,23 @@ export async function runAgentLoop(
         tool_calls: choice.message.tool_calls,
       } as AgentMessage)
 
-      // 执行每个 tool_call
+      // 执行每个 tool_call（流内已执行的直接取缓存结果，避免重复构建图元）
       for (const tc of choice.message.tool_calls) {
-        let args: Record<string, unknown> = {}
-        try {
-          args = JSON.parse(tc.function.arguments || '{}')
-        } catch {
-          args = {}
-        }
+        let result = streamedResults.get(tc.id)
 
-        const result = executeToolCall(tc.function.name, args, session, onStep)
+        if (result === undefined) {
+          let args: Record<string, unknown> = {}
+          try {
+            args = JSON.parse(tc.function.arguments || '{}')
+          } catch {
+            args = {}
+          }
+
+          const toolStartedAt = Date.now()
+          result = executeToolCall(tc.function.name, args, session, onStep, onSSEEvent)
+          toolMs += Date.now() - toolStartedAt
+          toolCalls++
+        }
 
         // 添加 tool 结果消息
         messages.push({
@@ -666,6 +840,7 @@ export async function runAgentLoop(
           content: result,
         })
       }
+      emitMetrics()
 
       // 如果是组装工具，生成完成
       if (choice.message.tool_calls.some(tc => isAssemblyTool(tc.function.name))) {
@@ -681,13 +856,16 @@ export async function runAgentLoop(
             }
             session.steps.push(doneStep)
 
+            const metrics = buildMetrics()
             onSSEEvent({ type: 'result', json: session.finalJson })
+            onSSEEvent({ type: 'metrics', metrics })
             onSSEEvent({ type: 'done' })
 
             return {
               success: true,
               json: session.finalJson,
               steps: session.steps,
+              metrics,
             }
           }
 
@@ -734,13 +912,16 @@ export async function runAgentLoop(
         if (errors.length === 0) {
           session.finalJson = json
 
+          const metrics = buildMetrics()
           onSSEEvent({ type: 'result', json })
+          onSSEEvent({ type: 'metrics', metrics })
           onSSEEvent({ type: 'done' })
 
           return {
             success: true,
             json,
             steps: session.steps,
+            metrics,
           }
         }
 
@@ -756,14 +937,22 @@ export async function runAgentLoop(
 
       // 文本中没有 JSON
       messages.push({ role: 'assistant', content })
+
+      const assembledFromText = finishWithAutoAssemble()
+      if (assembledFromText) return assembledFromText
+
       return {
         success: false,
         error: '模型未生成 JSON，可能需要补充信息',
         steps: session.steps,
+        metrics: buildMetrics(),
       }
     }
 
-    // === 情况 3: 未知状态 ===
+    // === 情况 3: 模型既未调用工具也没有文本 ===
+    const assembledFromEmpty = finishWithAutoAssemble()
+    if (assembledFromEmpty) return assembledFromEmpty
+
     retries++
   }
 
@@ -772,6 +961,7 @@ export async function runAgentLoop(
     success: false,
     error: `超过最大重试次数 (${maxRetries})`,
     steps: session.steps,
+    metrics: buildMetrics(),
   }
 }
 
@@ -794,6 +984,16 @@ interface ModelResponse {
 interface ModelCallResult {
   response: ModelResponse | null
   retryCount: number
+  /** 实际等待模型 API 的耗时（ms），不含重试退避等待 */
+  elapsedMs: number
+}
+
+/** 流内派发钩子：让工具在模型还在输出时就执行，而不是等整轮结束 */
+interface StreamDispatch {
+  /** 单个 tool_call 的 arguments 已完整，可以立即执行 */
+  onToolCall: (toolCall: ToolCall) => void
+  /** 本次尝试中途失败并将重试，需回滚已派发的副作用 */
+  onRollback: () => void
 }
 
 async function callModel(
@@ -801,10 +1001,20 @@ async function callModel(
   messages: AgentMessage[],
   tools: unknown[],
   onSSEEvent: (event: SSEEvent) => void,
+  dispatch?: StreamDispatch,
 ): Promise<ModelCallResult> {
   const maxRetries = config.modelApiMaxRetries
+  let elapsedMs = 0
+  let dispatched = false
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // 上一次尝试已经落了图元，重试前必须先撤销，否则会重复
+    if (dispatched) {
+      dispatch?.onRollback()
+      dispatched = false
+    }
+
+    const attemptStartedAt = Date.now()
     try {
       const body: Record<string, unknown> = {
         model: config.model,
@@ -837,10 +1047,12 @@ async function callModel(
 
         // 认证失败、参数错误等不可恢复错误不重试
         if (!isRetryable) {
-          return { response: null, retryCount: attempt }
+          elapsedMs += Date.now() - attemptStartedAt
+          return { response: null, retryCount: attempt, elapsedMs }
         }
 
         if (attempt < maxRetries) {
+          elapsedMs += Date.now() - attemptStartedAt
           const delay = getRetryDelay(config, attempt, res.status, res.headers.get('retry-after'))
           const reason = isRateLimited
             ? '模型服务触发速率限制'
@@ -852,14 +1064,16 @@ async function callModel(
           await sleep(delay)
           continue
         }
-        return { response: null, retryCount: attempt }
+        elapsedMs += Date.now() - attemptStartedAt
+        return { response: null, retryCount: attempt, elapsedMs }
       }
 
       // 流式读取模型 API 响应
       const reader = res.body?.getReader()
       if (!reader) {
         console.error('[AgentService] 无法获取响应流')
-        return { response: null, retryCount: attempt }
+        elapsedMs += Date.now() - attemptStartedAt
+        return { response: null, retryCount: attempt, elapsedMs }
       }
 
       const decoder = new TextDecoder()
@@ -870,6 +1084,28 @@ async function callModel(
         type: 'function'
         function: { name: string; arguments: string }
       }>()
+      let maxIndex = -1
+      const flushedIndexes = new Set<number>()
+
+      // index 递增说明上一个 tool_call 的分片已经吐完，可以立即派发
+      const flush = (index: number) => {
+        if (!dispatch || index < 0 || flushedIndexes.has(index)) return
+        const toolCall = accumulatedToolCalls.get(index)
+        if (!toolCall?.id || !toolCall.function.name) return
+        try {
+          JSON.parse(toolCall.function.arguments || '{}')
+        } catch {
+          return // 参数尚未闭合，留给流结束后统一执行
+        }
+        flushedIndexes.add(index)
+        try {
+          dispatch.onToolCall(toolCall)
+          dispatched = true
+        } catch (error) {
+          // 构建异常不是网络问题，不缓存结果即可交回流结束后的统一执行路径，避免误触发模型重试
+          console.error('[AgentService] 流内工具执行失败:', error)
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
@@ -901,6 +1137,10 @@ async function callModel(
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 const idx = tc.index ?? 0
+                if (idx > maxIndex) {
+                  flush(maxIndex)
+                  maxIndex = idx
+                }
                 if (!accumulatedToolCalls.has(idx)) {
                   accumulatedToolCalls.set(idx, {
                     id: tc.id || '',
@@ -920,6 +1160,9 @@ async function callModel(
         }
       }
 
+      // 流结束，最后一个 tool_call 也已完整
+      flush(maxIndex)
+
       // 构建最终响应
       const toolCalls = Array.from(accumulatedToolCalls.values())
       const message: NonNullable<ModelResponse['choices']>[0]['message'] = {
@@ -931,6 +1174,7 @@ async function callModel(
         message.tool_calls = toolCalls
       }
 
+      elapsedMs += Date.now() - attemptStartedAt
       return {
         response: {
           choices: [{
@@ -939,9 +1183,11 @@ async function callModel(
           }],
         },
         retryCount: attempt,
+        elapsedMs,
       }
     } catch (err) {
       console.error(`[AgentService] 网络请求异常 (attempt ${attempt + 1}/${maxRetries + 1}):`, err)
+      elapsedMs += Date.now() - attemptStartedAt
 
       if (attempt < maxRetries) {
         const delay = getRetryDelay(config, attempt)
@@ -952,11 +1198,11 @@ async function callModel(
         await sleep(delay)
         continue
       }
-      return { response: null, retryCount: attempt }
+      return { response: null, retryCount: attempt, elapsedMs }
     }
   }
 
-  return { response: null, retryCount: maxRetries }
+  return { response: null, retryCount: maxRetries, elapsedMs }
 }
 
 /** 计算指数退避延迟；429 至少等待一个 TPM 统计窗口，并优先遵循 Retry-After。 */

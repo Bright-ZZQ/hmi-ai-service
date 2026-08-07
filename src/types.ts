@@ -67,6 +67,7 @@ export interface AgentResult {
   json?: Record<string, unknown>
   error?: string
   steps: AgentStep[]
+  metrics?: StreamMetrics
 }
 
 export interface AgentStep {
@@ -93,6 +94,37 @@ export interface AgentConfig {
   modelApiRateLimitRetryDelay: number
 }
 
+/** 流式绘制的画布信息 */
+export interface StreamCanvas {
+  name: string
+  pageWidth: number
+  pageHeight: number
+  bgColor: string
+}
+
+/** 流式绘制的图元增量补丁 */
+export interface StreamPatch {
+  op: 'update' | 'delete'
+  target: string
+  element?: Record<string, unknown>
+}
+
+/** 生成耗时指标（累计值） */
+export interface StreamMetrics {
+  /** 等待模型 API 的累计耗时（ms，不含重试退避等待） */
+  modelMs: number
+  /** 服务端自身耗时（ms）= 总耗时 - 模型耗时 */
+  serverMs: number
+  /** 工具执行（图元构建/组装）累计耗时（ms） */
+  toolMs: number
+  /** Agent Loop 开始到当前的总耗时（ms） */
+  totalMs: number
+  /** 已完成的模型调用轮次 */
+  rounds: number
+  /** 已执行的工具调用数 */
+  toolCalls: number
+}
+
 /** SSE 事件类型 */
 export type SSEEventType =
   | 'thinking'
@@ -102,6 +134,11 @@ export type SSEEventType =
   | 'error'
   | 'retry'
   | 'done'
+  | 'canvas'
+  | 'element'
+  | 'element_patch'
+  | 'stream_reset'
+  | 'metrics'
 
 export interface SSEEvent {
   type: SSEEventType
@@ -110,4 +147,15 @@ export interface SSEEvent {
   toolArgs?: Record<string, unknown>
   json?: Record<string, unknown>
   retry?: boolean
+  /** 一次生成会话的唯一标识，用于前端丢弃过期流 */
+  streamId?: string
+  /** 单调递增序号 */
+  seq?: number
+  canvas?: StreamCanvas
+  /** 复合组件一次产出多个图元 */
+  elements?: Record<string, unknown>[]
+  /** 覆盖整块画布的底板，前端需下沉 zIndex */
+  isBackground?: boolean
+  patch?: StreamPatch
+  metrics?: StreamMetrics
 }
