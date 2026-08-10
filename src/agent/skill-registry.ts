@@ -305,6 +305,38 @@ const DELETE_DISPLAY_ELEMENT = createDeleteElementSkill('display')
 const UPDATE_SYMBOL_ELEMENT = createUpdateElementSkill('symbol')
 const DELETE_SYMBOL_ELEMENT = createDeleteElementSkill('symbol')
 
+function createGenerationPlanSkill(group: EditorType): SkillRegistryEntry {
+  return {
+    group,
+    toolDef: {
+      type: 'function',
+      function: {
+        name: 'declare_generation_plan',
+        description: `声明本次生成或修改的验收计划，必须在创建、修改或删除图元前调用。
+服务端会在最终组装时对照计划校验实际结果，避免遗漏数量约束或动态特性。
+计划只描述可验证结果，不传递图元 JSON。`,
+        parameters: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string', description: '对用户需求的简短复述' },
+            expectedElementCount: { type: 'number', description: '最终 elements/comps 扁平数组的准确数量；仅当用户明确要求图元数量或基于当前 JSON 可准确计算时填写，否则省略' },
+            requiredFeatureTools: {
+              type: 'array',
+              items: { type: 'string' },
+              description: '必须成功执行的 add_feature_* 工具名列表；每个条目代表一次特性应用，重复需求需重复填写，无特性则传空数组',
+            },
+            distinctFeatureTargets: { type: 'boolean', description: 'requiredFeatureTools 中各次特性应用是否必须绑定到互不相同的图元' },
+          },
+          required: ['summary', 'requiredFeatureTools', 'distinctFeatureTargets'],
+        },
+      },
+    },
+  }
+}
+
+const DECLARE_DISPLAY_GENERATION_PLAN = createGenerationPlanSkill('display')
+const DECLARE_SYMBOL_GENERATION_PLAN = createGenerationPlanSkill('symbol')
+
 // ============================================================
 // Display 图纸组 — 弧/弦/曲线/管道/折线/正多边形
 // ============================================================
@@ -643,6 +675,25 @@ const ASSEMBLE_DISPLAY: SkillRegistryEntry = {
 // Display 图纸组 — 动态特性工具
 // ============================================================
 
+const FEATURE_CONDITION_PROPS = {
+  conditionSpecifiedByUser: {
+    type: 'boolean',
+    description: '仅当用户原始请求明确指定了触发条件时设为 true；禁止根据场景自行推断或补充条件，默认 false',
+  },
+  dataSourceKey: {
+    type: 'string',
+    description: '用户明确指定的条件数据源键名；conditionSpecifiedByUser 不为 true 时禁止传入',
+  },
+  conditionOperator: {
+    type: 'number',
+    description: '用户明确指定的比较运算符：0=, 1=!=, 2=>, 3=<, 4=>=, 5=<=, 6=包含, 7=不包含, 8=在之间, 9=不在之间, 10=位运算',
+  },
+  conditionValue: {
+    type: 'string',
+    description: '用户明确指定的条件比较值；不得自行生成默认值',
+  },
+} as const
+
 const ADD_FEATURE_VISIBLE: SkillRegistryEntry = {
   group: 'display',
   toolDef: {
@@ -695,9 +746,7 @@ const ADD_FEATURE_CHANGE_COLOR: SkillRegistryEntry = {
         type: 'object',
         properties: {
           elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
-          dataSourceKey: { type: 'string', description: '条件数据源键名' },
-          conditionOperator: { type: 'number', description: '比较运算符：0=, 1=!=, 2=>, 3=<, 4=>=, 5=<=, 6=包含, 7=不包含, 8=在之间, 9=不在之间, 10=位运算' },
-          conditionValue: { type: 'string', description: '条件比较值' },
+          ...FEATURE_CONDITION_PROPS,
           isFullClr: { type: 'number', description: '是否改变填充色，1=是，0=否，默认 0' },
           chBacClr: { type: 'string', description: '条件满足时的填充色（支持 rgb/rgba/hex），默认 rgb(0,0,0)' },
           chBacGra: { type: 'string', description: '填充渐变模式，默认空（无渐变）' },
@@ -724,6 +773,40 @@ const ADD_FEATURE_CHANGE_COLOR: SkillRegistryEntry = {
   },
 }
 
+const ADD_FEATURE_BLINK: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_blink',
+      description: `为图元添加闪烁动态特性（Blink）。支持显隐闪烁和颜色闪烁，可配置慢/中/快三档频率。
+    有不透明填充色的图元默认使用显隐闪烁，效果更明显；仅当用户明确要求“颜色闪烁”时才设置 forceColorBlink=true。存储到 store.dynamicDyna，type 为 GraphDynaBlink。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id、id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          blinkFreq: { type: 'number', enum: [0, 1, 2], description: '闪烁频率：0=慢(1000ms)，1=中(500ms)，2=快(250ms)，默认 0' },
+          blinkMethod: { type: 'number', enum: [0, 1], description: '闪烁方式：0=显隐闪烁，1=颜色闪烁，默认 0；有填充色的图元优先使用 0' },
+          forceColorBlink: { type: 'boolean', description: '仅当用户明确要求“颜色闪烁”时设为 true；否则有填充色的图元会自动改用显隐闪烁' },
+          blinkColor: { type: 'string', description: '颜色闪烁的通用颜色，默认 rgb(0, 0, 0)' },
+          isFullClr: { type: 'number', description: '颜色闪烁时是否改变填充色：1=是，0=否，默认 0' },
+          isFrameClr: { type: 'number', description: '颜色闪烁时是否改变边框色：1=是，0=否，默认 0' },
+          isTextClr: { type: 'number', description: '颜色闪烁时是否改变文字色：1=是，0=否，默认 0' },
+          blinkBacClr: { type: 'string', description: '闪烁填充色，必须与图元当前背景色有明显对比；对比度低于 3:1 时服务端自动选择黑/白对比色' },
+          blinkBorClr: { type: 'string', description: '闪烁边框色，默认 rgb(0, 0, 0)' },
+          blinkBacGra: { type: 'string', description: '闪烁填充渐变模式，默认空' },
+          blinkBorGra: { type: 'string', description: '闪烁边框渐变模式，默认空' },
+          blinkBacGraClr: { type: 'string', description: '闪烁填充渐变色，默认 rgb(255, 255, 255)' },
+          blinkBorGraClr: { type: 'string', description: '闪烁边框渐变色，默认 rgb(255, 255, 255)' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName'],
+      },
+    },
+  },
+}
+
 const ADD_FEATURE_MOVE: SkillRegistryEntry = {
   group: 'display',
   toolDef: {
@@ -736,25 +819,27 @@ const ADD_FEATURE_MOVE: SkillRegistryEntry = {
         type: 'object',
         properties: {
           elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
-          dataSourceKey: { type: 'string', description: '条件数据源键名' },
-          conditionOperator: { type: 'number', description: '比较运算符 0~10' },
-          conditionValue: { type: 'string', description: '条件比较值' },
+          ...FEATURE_CONDITION_PROPS,
           moveMode: { type: 'number', description: '移动方式：0=自动移动（固定速度），1=参数驱动移动（数据源映射），默认 0' },
           reBack: { type: 'number', description: '是否往返移动：0=单向，1=往返（到达终点后反向），默认 0' },
           hMove: { type: 'number', description: '是否开启水平移动：0=否，1=是，默认 1' },
           vMove: { type: 'number', description: '是否开启垂直移动：0=否，1=是，默认 1' },
           hDistance: { type: 'number', description: '水平移动距离(px)，默认 0' },
-          hSpeed: { type: 'number', description: '自动模式下水平移动速度(px/帧)，默认 0' },
+          hSpeed: { type: 'number', description: '自动模式下水平移动速度(px/s，必须为正数)，默认 0' },
           vDistance: { type: 'number', description: '垂直移动距离(px)，默认 0' },
-          vSpeed: { type: 'number', description: '自动模式下垂直移动速度(px/帧)，默认 0' },
+          vSpeed: { type: 'number', description: '自动模式下垂直移动速度(px/s，必须为正数)，默认 0' },
           hDataSourceKey: { type: 'string', description: '参数模式下水平方向数据源键名' },
           hUseDB: { type: 'number', description: '水平使用数据库量程：0=否，1=是，默认 0' },
           hMu: { type: 'number', description: '水平量程上限（hUseDB=0 时），默认 100' },
           hMd: { type: 'number', description: '水平量程下限（hUseDB=0 时），默认 0' },
+          hMuDataSourceKey: { type: 'string', description: '水平数据库量程上限数据源（hUseDB=1 时）' },
+          hMdDataSourceKey: { type: 'string', description: '水平数据库量程下限数据源（hUseDB=1 时）' },
           vDataSourceKey: { type: 'string', description: '参数模式下垂直方向数据源键名' },
           vUseDB: { type: 'number', description: '垂直使用数据库量程：0=否，1=是，默认 0' },
           vMu: { type: 'number', description: '垂直量程上限（vUseDB=0 时），默认 100' },
           vMd: { type: 'number', description: '垂直量程下限（vUseDB=0 时），默认 0' },
+          vMuDataSourceKey: { type: 'string', description: '垂直数据库量程上限数据源（vUseDB=1 时）' },
+          vMdDataSourceKey: { type: 'string', description: '垂直数据库量程下限数据源（vUseDB=1 时）' },
           not: { type: 'boolean', description: '条件取反，默认 false' },
         },
         required: ['elementName'],
@@ -814,21 +899,21 @@ const ADD_FEATURE_ROTATE: SkillRegistryEntry = {
         type: 'object',
         properties: {
           elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
-          dataSourceKey: { type: 'string', description: '条件数据源键名' },
-          conditionOperator: { type: 'number', description: '比较运算符 0~10' },
-          conditionValue: { type: 'string', description: '条件比较值' },
+          ...FEATURE_CONDITION_PROPS,
           rotMode: { type: 'number', description: '旋转方式：0=自动旋转（固定角度），1=参数驱动旋转（数据源映射），默认 0' },
           rotCenter: { type: 'number', description: '旋转中心：0=偏移中心，1=左上角，2=左下角，3=右上角，4=右下角，5=中心，6=顶部中心，7=底部中心，8=左侧中心，9=右侧中心，默认 5' },
-          rotAngle: { type: 'number', description: '自动模式下每次旋转角度(度)，范围 -360~360，默认 5' },
+          rotAngle: { type: 'number', description: '自动模式下每秒旋转角度（度/秒），范围 -360~360，默认 5；例如 90 表示每秒旋转 90 度' },
           rotCond: { type: 'number', description: '是否开启条件控制旋转：0=否，1=是，默认 0' },
           condTrue: { type: 'number', description: '条件满足时行为：0=旋转，1=停止，2=保持，默认 0' },
-          condFalse: { type: 'number', description: '条件不满足时行为：0=旋转，1=停止，2=保持，默认 0' },
+          condFalse: { type: 'number', description: '条件不满足时行为：0=旋转，1=停止，2=保持，默认 1' },
           dsDataSourceKey: { type: 'string', description: '参数模式下数据源键名' },
           maxAngle: { type: 'number', description: '参数模式下最大旋转角度，范围 -360~360，默认 360' },
           minAngle: { type: 'number', description: '参数模式下最小旋转角度，范围 -360~360，默认 0' },
           useDB: { type: 'number', description: '是否使用数据库量程：0=否，1=是，默认 0' },
           mu: { type: 'number', description: '量程上限（useDB=0 时），默认 100' },
           md: { type: 'number', description: '量程下限（useDB=0 时），默认 0' },
+          muDataSourceKey: { type: 'string', description: '数据库量程上限数据源（useDB=1 时）' },
+          mdDataSourceKey: { type: 'string', description: '数据库量程下限数据源（useDB=1 时）' },
           not: { type: 'boolean', description: '条件取反，默认 false' },
         },
         required: ['elementName'],
@@ -840,6 +925,21 @@ const ADD_FEATURE_ROTATE: SkillRegistryEntry = {
 // 旋转特性同时适用于图纸元素和图符 comp；两个编辑器需要各自注册一次。
 const ADD_FEATURE_ROTATE_SYMBOL: SkillRegistryEntry = {
   ...ADD_FEATURE_ROTATE,
+  group: 'symbol',
+}
+
+const ADD_FEATURE_MOVE_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_MOVE,
+  group: 'symbol',
+}
+
+const ADD_FEATURE_BLINK_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_BLINK,
+  group: 'symbol',
+}
+
+const ADD_FEATURE_CHANGE_COLOR_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_CHANGE_COLOR,
   group: 'symbol',
 }
 
@@ -1199,6 +1299,8 @@ const ASSEMBLE_SYMBOL: SkillRegistryEntry = {
 // ============================================================
 
 const ALL_SKILLS: SkillRegistryEntry[] = [
+  DECLARE_DISPLAY_GENERATION_PLAN,
+
   // Display 图纸组 — 图元创建
   CREATE_DISPLAY_RECT,
   CREATE_DISPLAY_ELLIPSE,
@@ -1229,9 +1331,12 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   ADD_FEATURE_VISIBLE,
   ADD_FEATURE_WRITE_VALUE,
   ADD_FEATURE_CHANGE_COLOR,
+  ADD_FEATURE_BLINK,
   ADD_FEATURE_MOVE,
   ADD_FEATURE_OPEN_PAGE,
   ADD_FEATURE_ROTATE,
+
+  DECLARE_SYMBOL_GENERATION_PLAN,
 
   // Symbol 图符组 — 图元创建
   CREATE_SYMBOL_RECT,
@@ -1246,6 +1351,9 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
 
   // Symbol 图符组 — 动态特性
   ADD_FEATURE_ROTATE_SYMBOL,
+  ADD_FEATURE_MOVE_SYMBOL,
+  ADD_FEATURE_BLINK_SYMBOL,
+  ADD_FEATURE_CHANGE_COLOR_SYMBOL,
 
   // Symbol 图符组 — 已有图元编辑
   UPDATE_SYMBOL_ELEMENT,

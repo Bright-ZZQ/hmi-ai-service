@@ -16,6 +16,9 @@
 import { getToolsForType, isAssemblyTool } from './skill-registry'
 import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, isBackgroundElement } from './element-builders'
 import type { MetricPanelParams, EquipmentParams } from './element-builders'
+import { buildDynamicFeature, isDynamicFeatureTool } from './dynamic-feature-builders'
+import { buildGenerationPlan, validateGenerationPlan } from './generation-plan'
+import type { FeatureExecution, GenerationPlan } from './generation-plan'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
   EditorType,
@@ -40,10 +43,24 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 ## 工作流程
 
-1. 分析用户需求，确定需要创建哪些图元
+1. 分析用户需求，首先调用 \`declare_generation_plan\` 声明可验证的数量与特性要求
 2. 依次调用 create_display_* 或 create_symbol_* 工具创建每个图元
-3. 所有图元创建完毕后，调用 assemble_display 或 assemble_symbol 组装成完整的图纸/图符 JSON
-4. 组装工具会自动使用你创建的所有图元，无需手动指定 elementsData 参数（除非你有特殊需求）
+3. 用户要求动态效果时，在目标图元创建后调用对应的 add_feature_* 工具
+4. 所有图元和特性创建完毕后，调用 assemble_display 或 assemble_symbol 组装成完整的图纸/图符 JSON
+5. 组装工具会自动使用你创建的所有图元，无需手动指定 elementsData 参数（除非你有特殊需求）
+
+## 动态特性
+
+- 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`。
+- 必须先创建目标图元，再调用特性工具；\`elementName\` 使用创建工具返回的 name、id 或 node_id。
+- “分别配置”表示每种特性必须绑定到不同图元，不得把所有特性堆在同一个图元上。
+- 禁止自行为特性添加任何触发条件。只有用户原始请求明确指定“当/如果某测点满足某条件时”，才设置 \`conditionSpecifiedByUser=true\` 并传入 \`dataSourceKey\`、\`conditionOperator\`、\`conditionValue\`。
+- 用户未明确指定条件时，必须省略所有条件参数并保持 \`conditionSpecifiedByUser=false\`；不得根据设备状态、颜色、动画类型或行业常识推断条件，不得补充默认测点或默认比较值。无条件表示特性持续生效。
+- 自动旋转的 \`rotAngle\` 表示每秒旋转角度（单位：度/秒）；自动移动使用固定速度。“随测点值变化”使用参数模式，并配置对应方向的数据源与量程。
+- 图元有不透明填充色时优先使用显隐闪烁（\`blinkMethod=0\`），效果比颜色闪烁更明显。
+- 只有用户明确要求“颜色闪烁”时才使用 \`blinkMethod=1\` 并设置 \`forceColorBlink=true\`；此时按目标类型开启填充、边框或文字颜色开关。
+- 颜色闪烁的填充色必须与图元当前背景色有明显对比；对比度低于 3:1 时，服务端自动改用黑色或白色对比色。
+- 变色时必须至少开启 \`isFullClr\`、\`isFrameClr\`、\`isTextClr\` 中一项，并提供对应颜色。
 
 ## 优先使用复合组件（关键，避免重叠）
 
@@ -52,6 +69,12 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - **数据面板 / 指标列表 / 监控读数** → 必须用 \`create_metric_panel\`：只给标题和 rows（{label, value, status}），一次产出整块面板。
 - **工艺设备**（储罐/塔器/炉子等）→ 必须用 \`create_equipment\`：只给 kind 和包围盒 x/y/width/height，一次产出比例正确的设备图符。
 - 仅**装饰性、零散**的图元（标题文字、连接线、箭头、背景）才用 create_display_* 原语逐个绘制。
+
+## 图元数量语义（强制）
+
+- 用户明确要求“生成 N 个图元”时，最终 \`elements\` / \`comps\` 必须恰好有 N 项。
+- \`create_equipment\` 和 \`create_metric_panel\` 一次会展开为多个基础图元，因此用户按“图元”计数时禁止使用；只有用户明确按“设备”或“面板”计数时才使用复合工具。
+- 将明确的最终数量填入生成计划的 \`expectedElementCount\`；数量不明确时省略，不得猜测。
 
 ## 图层顺序（关键，避免遮挡）
 
@@ -118,8 +141,8 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 function getSystemPrompt(editorType: EditorType): string {
   const target = editorType === 'symbol'
-    ? `本次任务必须生成图符（Symbol）。只能调用 create_symbol_* 和 assemble_symbol；最终 JSON 顶层必须包含 comps，禁止输出 document。`
-    : `本次任务必须生成图纸（Display）。只能调用 create_display_* 和 assemble_display；最终 JSON 顶层必须包含 document，禁止输出 comps。`
+    ? `本次任务必须生成图符（Symbol）。使用 create_symbol_* 创建图元，可按需调用 add_feature_*，最后调用 assemble_symbol；最终 JSON 顶层必须包含 comps，禁止输出 document。`
+    : `本次任务必须生成图纸（Display）。使用 create_display_* 创建图元，可按需调用 add_feature_*，最后调用 assemble_display；最终 JSON 顶层必须包含 document，禁止输出 comps。`
   return `${SYSTEM_PROMPT}\n\n## 本次输出类型（强制）\n\n${target}`
 }
 
@@ -133,6 +156,8 @@ interface SessionState {
   steps: AgentStep[]
   finalJson?: Record<string, unknown>
   currentJson?: Record<string, unknown>
+  generationPlan?: GenerationPlan
+  featureExecutions: FeatureExecution[]
   /** 流式绘制用的画布信息；最终以 assemble 结果为准 */
   canvas: StreamCanvas
 }
@@ -192,6 +217,7 @@ function createSession(editorType: EditorType, currentJson?: Record<string, unkn
     workingElements: getElementsFromJson(editorType, currentJson),
     steps: [],
     currentJson,
+    featureExecutions: [],
     canvas: getCanvasFromJson(editorType, currentJson),
   }
 }
@@ -229,6 +255,13 @@ function getElementAliases(element: Record<string, unknown>): string[] {
 
 function findElementIndex(elements: Record<string, unknown>[], target: string): number {
   return elements.findIndex(element => getElementAliases(element).includes(target))
+}
+
+function getElementFillColor(element: Record<string, unknown>): string | undefined {
+  const fillColor = isPlainObject(element.fillColor) ? element.fillColor : undefined
+  if (typeof fillColor?.startColor === 'string') return fillColor.startColor
+  const attrs = isPlainObject(element.attrs) ? element.attrs : undefined
+  return typeof attrs?.fill === 'string' ? attrs.fill : undefined
 }
 
 // ============================================================
@@ -278,6 +311,21 @@ function executeToolCall(
 ): string {
   const elementType = TOOL_TO_ELEMENT_TYPE[name]
   const symbolType = TOOL_TO_SYMBOL_TYPE[name]
+
+  if (name === 'declare_generation_plan') {
+    const plan = buildGenerationPlan(args)
+    session.generationPlan = plan
+    const step: AgentStep = {
+      type: 'tool_call',
+      content: `已声明生成计划: ${plan.summary || '未命名计划'}`,
+      toolName: name,
+      toolArgs: args,
+      timestamp: Date.now(),
+    }
+    session.steps.push(step)
+    onStep(step)
+    return JSON.stringify({ success: true, plan })
+  }
 
   // 只有整批都是全画布底板时才下沉，避免复合组件的混合批次被误判
   const emitElements = (elements: Record<string, unknown>[]) => {
@@ -353,7 +401,14 @@ function executeToolCall(
     onStep(step)
     emitElements(elements)
 
-    return JSON.stringify({ success: true, count: elements.length })
+    return JSON.stringify({
+      success: true,
+      count: elements.length,
+      targets: elements.map(element => ({
+        id: element.id,
+        name: element.name,
+      })),
+    })
   }
 
   if (name === 'create_equipment') {
@@ -379,7 +434,14 @@ function executeToolCall(
     onStep(step)
     emitElements(elements)
 
-    return JSON.stringify({ success: true, count: elements.length })
+    return JSON.stringify({
+      success: true,
+      count: elements.length,
+      targets: elements.map(element => ({
+        id: element.id,
+        name: element.name,
+      })),
+    })
   }
 
   // 2. 修改已有图元（多轮对话）
@@ -537,12 +599,12 @@ function executeToolCall(
     return JSON.stringify(symbol)
   }
 
-  // 6. 旋转动态特性
-  if (name === 'add_feature_rotate') {
+  // 6. 动态特性
+  if (isDynamicFeatureTool(name)) {
     const target = String(args.elementName || '')
     const index = findElementIndex(session.workingElements, target)
     if (index < 0) {
-      return JSON.stringify({ success: false, error: `未找到需要旋转的图元: ${target}` })
+      return JSON.stringify({ success: false, error: `未找到需要添加特性的图元: ${target}` })
     }
 
     const element = session.workingElements[index]
@@ -550,70 +612,36 @@ function executeToolCall(
     const existingFeatures = Array.isArray(elementStore.dynamicDyna)
       ? [...elementStore.dynamicDyna]
       : []
-    const original = (value: unknown) => ({ original: value, ref: '' })
-    const rotMode = Number(args.rotMode ?? 0)
-    const conditions = args.dataSourceKey ? [{
-      num: '1',
-      leftValue: { nodeId: '', tagName: String(args.dataSourceKey), nodeType: '' },
-      sign: Number(args.conditionOperator ?? 0),
-      rightValue: original(String(args.conditionValue ?? '1')),
-      logicSign: 0,
-      logic: '',
-      conditions: [],
-    }] : []
-    const pars = rotMode === 1 ? {
-      rotMode: original(1), rotModeRef: original(''),
-      rotCenter: original(Number(args.rotCenter ?? 5)), rotCenterRef: original(''),
-      ds: original({ nodeId: '', tagName: String(args.dsDataSourceKey || ''), nodeType: '' }), dsRef: original(''),
-      maxAngle: original(Number(args.maxAngle ?? 360)), maxAngleRef: original(''),
-      minAngle: original(Number(args.minAngle ?? 0)), minAngleRef: original(''),
-      useDB: original(Number(args.useDB ?? 0)), useDBRef: original(''),
-      mu: original(Number(args.mu ?? 100)), muRef: original(''),
-      md: original(Number(args.md ?? 0)), mdRef: original(''),
-    } : {
-      rotMode: original(0), rotModeRef: original(''),
-      rotCenter: original(Number(args.rotCenter ?? 5)), rotCenterRef: original(''),
-      rotAngle: original(Number(args.rotAngle ?? 5)), rotAngleRef: original(''),
-      rotCond: original(Number(args.rotCond ?? 0)), rotCondRef: original(''),
-      condTrue: original(Number(args.condTrue ?? 0)), condTrueRef: original(''),
-      condFalse: original(Number(args.condFalse ?? 0)), condFalseRef: original(''),
-    }
-    existingFeatures.push({
-      id: globalThis.crypto.randomUUID(),
-      name: 'GraphDynaRotate',
-      type: 'GraphDynaRotate',
-      conditions,
-      not: Boolean(args.not ?? false),
-      pars,
-    })
+    const featureArgs = name === 'add_feature_blink'
+      ? { ...args, elementFillColor: getElementFillColor(element) }
+      : args
+    const feature = buildDynamicFeature(name, featureArgs)
+    existingFeatures.push(feature)
     element.store = { ...elementStore, dynamicDyna: existingFeatures }
+    session.featureExecutions.push({
+      toolName: name,
+      elementKey: getElementAliases(element)[0] || target,
+    })
 
     const step: AgentStep = {
       type: 'tool_call',
-      content: `已为图元 "${target}" 添加旋转动态特性`,
+      content: `已为图元 "${target}" 添加 ${feature.type} 动态特性`,
       toolName: name,
       toolArgs: args,
       timestamp: Date.now(),
     }
     session.steps.push(step)
     onStep(step)
+    emit({
+      type: 'element_patch',
+      patch: { op: 'update', target, element },
+    })
     return JSON.stringify({ success: true, element })
   }
 
-  // 7. 其他动态特性工具（当前为占位实现）
+  // 7. 其他尚未实现的动态特性工具
   if (name.startsWith('add_feature_')) {
-    const featureName = name.replace('add_feature_', '')
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已添加 ${featureName} 动态特性到图元 "${args.elementName || '(未指定)'}"`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-
-    return JSON.stringify({ success: true, feature: featureName, target: args.elementName })
+    return JSON.stringify({ success: false, error: `动态特性工具尚未实现: ${name}` })
   }
 
   // 未知工具
@@ -642,6 +670,22 @@ export async function runAgentLoop(
   const session = createSession(editorType, context.currentJson)
   const tools = getToolsForType(editorType)
   const maxRetries = config.maxRetries
+  const validateFinalOutput = (json: unknown) => {
+    const output = isPlainObject(json) ? json : undefined
+    const generatedElements = getElementsFromJson(editorType, output)
+    const generatedElementKeys = new Set(generatedElements.flatMap(getElementAliases))
+    const finalFeatureExecutions = session.featureExecutions.filter(
+      execution => generatedElementKeys.has(execution.elementKey),
+    )
+    return [
+      ...validateOutput(json, editorType),
+      ...validateGenerationPlan(
+        session.generationPlan,
+        generatedElements.length,
+        finalFeatureExecutions,
+      ).map(message => ({ path: 'generationPlan', message })),
+    ]
+  }
 
   const startedAt = Date.now()
   let modelMs = 0
@@ -699,7 +743,7 @@ export async function runAgentLoop(
     toolCalls++
 
     if (!session.finalJson) return null
-    if (validateOutput(session.finalJson, editorType).length > 0) {
+    if (validateFinalOutput(session.finalJson).length > 0) {
       // 兜底结果不合法则不占用结果位，交回原有重试/失败路径
       session.finalJson = undefined
       return null
@@ -744,8 +788,10 @@ export async function runAgentLoop(
 
     // 流内派发：模型每吐完一个 tool_call 就立即执行并推送图元，不必等整轮结束
     const streamedResults = new Map<string, string>()
-    const baseElementCount = session.workingElements.length
+    const baseWorkingElements = structuredClone(session.workingElements)
     const baseToolCalls = toolCalls
+    const baseGenerationPlan = session.generationPlan
+    const baseFeatureExecutionCount = session.featureExecutions.length
     // 流内工具是在读流循环里跑的，会被算进 callModel 的 elapsedMs，需单独记账后扣除
     let streamToolMs = 0
 
@@ -769,8 +815,14 @@ export async function runAgentLoop(
       },
       // 模型 API 中途失败重试时，撤销本次尝试已提交的图元，并让前端重画已有部分
       onRollback: () => {
-        session.workingElements.length = baseElementCount
+        session.workingElements.splice(
+          0,
+          session.workingElements.length,
+          ...structuredClone(baseWorkingElements),
+        )
         session.finalJson = undefined
+        session.generationPlan = baseGenerationPlan
+        session.featureExecutions.length = baseFeatureExecutionCount
         streamedResults.clear()
         toolCalls = baseToolCalls
         onSSEEvent({ type: 'stream_reset' })
@@ -846,7 +898,7 @@ export async function runAgentLoop(
       if (choice.message.tool_calls.some(tc => isAssemblyTool(tc.function.name))) {
         if (session.finalJson) {
           // Schema 校验
-          const errors = validateOutput(session.finalJson, editorType)
+          const errors = validateFinalOutput(session.finalJson)
           if (errors.length === 0) {
             // 成功
             const doneStep: AgentStep = {
@@ -908,7 +960,7 @@ export async function runAgentLoop(
           continue
         }
 
-        const errors = validateOutput(json, editorType)
+        const errors = validateFinalOutput(json)
         if (errors.length === 0) {
           session.finalJson = json
 

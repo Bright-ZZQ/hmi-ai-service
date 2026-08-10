@@ -29,7 +29,7 @@ export interface ToolDefinition {
       properties: Record<string, {
         type: string
         description: string
-        enum?: string[]
+        enum?: Array<string | number | boolean>
         items?: Record<string, unknown>
       }>
       required: string[]

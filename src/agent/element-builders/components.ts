@@ -317,7 +317,10 @@ function buildTower(p: EquipmentParams): Record<string, unknown>[] {
 function buildColumn(p: EquipmentParams): Record<string, unknown>[] {
   const { x, y, width, height, name = '塔柱' } = p
   const pal = palette(p.fill, p.stroke)
-  const capH = Math.max(Math.round(width * 0.4), 10)
+  const capH = Math.min(
+    Math.max(Math.round(width * 0.4), 10),
+    Math.max(Math.floor(height * 0.2), 1),
+  )
 
   const els: Record<string, unknown>[] = [
     buildRect({

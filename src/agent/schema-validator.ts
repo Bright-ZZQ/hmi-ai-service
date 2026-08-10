@@ -78,6 +78,16 @@ function validateDisplay(json: unknown): ValidationError[] {
       errors.push({ path: `${prefix}.zIndex`, message: '图元必须有 zIndex 字段' })
     }
 
+    if (el.type !== 'Group') {
+      if (typeof el.width !== 'number' || !Number.isFinite(el.width) || el.width <= 0) {
+        errors.push({ path: `${prefix}.width`, message: '图元 width 必须是大于 0 的有限数字' })
+      }
+
+      if (typeof el.height !== 'number' || !Number.isFinite(el.height) || el.height <= 0) {
+        errors.push({ path: `${prefix}.height`, message: '图元 height 必须是大于 0 的有限数字' })
+      }
+    }
+
     // 非 Group 图元需要 localRect
     if (el.type !== 'Group' && !Array.isArray(el.localRect)) {
       errors.push({ path: `${prefix}.localRect`, message: '非 Group 图元需要 localRect 字段' })
