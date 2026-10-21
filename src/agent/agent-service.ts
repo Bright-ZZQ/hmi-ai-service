@@ -13,10 +13,10 @@
  * - 模型无需手动传递大型 JSON 对象
  */
 
-import { getToolsForType, isAssemblyTool } from './skill-registry'
-import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, isBackgroundElement } from './element-builders'
-import type { MetricPanelParams, EquipmentParams } from './element-builders'
-import { buildDynamicFeature, isDynamicFeatureTool } from './dynamic-feature-builders'
+import { getAllSkills, isAssemblyTool, lintRegistry, selectTools } from './skill-registry'
+import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, buildChartPanel, isBackgroundElement } from './element-builders'
+import type { MetricPanelParams, EquipmentParams, ChartPanelParams } from './element-builders'
+import { buildDynamicFeature, buildInteractiveFeature, isDynamicFeatureTool, isInteractiveFeatureTool } from './dynamic-feature-builders'
 import { buildGenerationPlan, validateGenerationPlan } from './generation-plan'
 import type { FeatureExecution, GenerationPlan } from './generation-plan'
 import { validateOutput, formatErrors } from './schema-validator'
@@ -51,7 +51,8 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 ## 动态特性
 
-- 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`。
+- 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`，数值显示 → \`add_feature_num_display\`，显隐 → \`add_feature_visible\`。
+- 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`。
 - 必须先创建目标图元，再调用特性工具；\`elementName\` 使用创建工具返回的 name、id 或 node_id。
 - “分别配置”表示每种特性必须绑定到不同图元，不得把所有特性堆在同一个图元上。
 - 禁止自行为特性添加任何触发条件。只有用户原始请求明确指定“当/如果某测点满足某条件时”，才设置 \`conditionSpecifiedByUser=true\` 并传入 \`dataSourceKey\`、\`conditionOperator\`、\`conditionValue\`。
@@ -61,19 +62,23 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 只有用户明确要求“颜色闪烁”时才使用 \`blinkMethod=1\` 并设置 \`forceColorBlink=true\`；此时按目标类型开启填充、边框或文字颜色开关。
 - 颜色闪烁的填充色必须与图元当前背景色有明显对比；对比度低于 3:1 时，服务端自动改用黑色或白色对比色。
 - 变色时必须至少开启 \`isFullClr\`、\`isFrameClr\`、\`isTextClr\` 中一项，并提供对应颜色。
+- 显隐使用 \`isVisible\`：1=条件满足显示，0=条件满足隐藏。用户未指定条件时特性持续生效。
+- 写值必须传入要写入的测点 \`dataSourceKey\`；开关量用 \`valueType=digital\`（默认，反转或写 0/1），模拟量用 \`valueType=analog\`。触发事件默认单击。
+- 打开画面必须指定目标：图纸用 \`pageName\`，网页用 \`webPath\`。弹窗打开时设置 \`popType=1\` 并配置位置/尺寸。
 
 ## 优先使用复合组件（关键，避免重叠）
 
 **禁止**用一堆 create_display_text 手工逐像素拼"标签+数值"表格——这极易算错坐标导致重叠、越界。改用以下复合工具，其内部坐标由布局引擎**确定性计算**，保证不重叠、不越界、对齐整齐：
 
 - **数据面板 / 指标列表 / 监控读数** → 必须用 \`create_metric_panel\`：只给标题和 rows（{label, value, status}），一次产出整块面板。
+- **图表**（柱状图 / 折线图 / 饼图、趋势、占比、统计）→ 必须用 \`create_chart_panel\`：只给 kind + title + data（[{label, value}]），一次产出整张图表卡片。坐标轴、柱子、折线、扇形、图例全部自动排布并被限制在卡片内，**绝不越界**。严禁用 create_display_rect / pie / polyline / line 手工拼图表。
 - **工艺设备**（储罐/塔器/炉子等）→ 必须用 \`create_equipment\`：只给 kind 和包围盒 x/y/width/height，一次产出比例正确的设备图符。
 - 仅**装饰性、零散**的图元（标题文字、连接线、箭头、背景）才用 create_display_* 原语逐个绘制。
 
 ## 图元数量语义（强制）
 
 - 用户明确要求“生成 N 个图元”时，最终 \`elements\` / \`comps\` 必须恰好有 N 项。
-- \`create_equipment\` 和 \`create_metric_panel\` 一次会展开为多个基础图元，因此用户按“图元”计数时禁止使用；只有用户明确按“设备”或“面板”计数时才使用复合工具。
+- \`create_equipment\`、\`create_metric_panel\` 和 \`create_chart_panel\` 一次会展开为多个基础图元，因此用户按“图元”计数时禁止使用；只有用户明确按“设备”或“面板”计数时才使用复合工具。
 - 将明确的最终数量填入生成计划的 \`expectedElementCount\`；数量不明确时省略，不得猜测。
 
 ## 图层顺序（关键，避免遮挡）
@@ -298,6 +303,470 @@ const TOOL_TO_SYMBOL_TYPE: Record<string, string> = {
   create_symbol_pie: 'Pie',
 }
 
+// ============================================================
+// 工具执行分发（P1：注册表驱动的 name → handler 查表）
+// ============================================================
+
+interface ToolExecContext {
+  name: string
+  args: Record<string, unknown>
+  session: SessionState
+  onStep: (step: AgentStep) => void
+  emit: (event: SSEEvent) => void
+}
+
+type ToolHandler = (ctx: ToolExecContext) => string
+
+// 只有整批都是全画布底板时才下沉，避免复合组件的混合批次被误判
+function emitElements(
+  session: SessionState,
+  emit: (event: SSEEvent) => void,
+  elements: Record<string, unknown>[],
+): void {
+  if (elements.length === 0) return
+  emit({
+    type: 'element',
+    elements,
+    isBackground: session.editorType === 'display'
+      && elements.every(el => isBackgroundElement(el, session.canvas.pageWidth, session.canvas.pageHeight)),
+  })
+}
+
+function handleDeclarePlan({ name, args, session, onStep }: ToolExecContext): string {
+  const plan = buildGenerationPlan(args)
+  session.generationPlan = plan
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已声明生成计划: ${plan.summary || '未命名计划'}`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  return JSON.stringify({ success: true, plan })
+}
+
+// 图元创建工具（create_display_*）
+function handleCreateDisplayElement({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const elementType = TOOL_TO_ELEMENT_TYPE[name]
+  const element = buildDisplayElement(elementType, args)
+  session.workingElements.push(element)
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已创建 ${elementType} 图元: ${element.name || '(自动命名)'}`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emitElements(session, emit, [element])
+
+  return JSON.stringify(element)
+}
+
+// 图符图元创建工具（create_symbol_*）
+function handleCreateSymbolElement({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const symbolType = TOOL_TO_SYMBOL_TYPE[name]
+  const element = buildSymbolElement(symbolType, args)
+  session.workingElements.push(element)
+  const attrs = isPlainObject(element.attrs) ? element.attrs : {}
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已创建 ${symbolType} 图符图元: ${attrs.name || '(自动命名)'}`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emitElements(session, emit, [element])
+
+  return JSON.stringify(element)
+}
+
+// 复合组件：指标面板
+function handleMetricPanel({ name, args, session, onStep, emit }: ToolExecContext): string {
+  let elements: Record<string, unknown>[]
+  try {
+    elements = buildMetricPanel(args as unknown as MetricPanelParams)
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : 'create_metric_panel 失败',
+    })
+  }
+  session.workingElements.push(...elements)
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已创建指标面板 "${args.title || ''}"，含 ${elements.length} 个图元`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emitElements(session, emit, elements)
+
+  return JSON.stringify({
+    success: true,
+    count: elements.length,
+    targets: elements.map(element => ({
+      id: element.id,
+      name: element.name,
+    })),
+  })
+}
+
+// 复合组件：图表卡片
+function handleChartPanel({ name, args, session, onStep, emit }: ToolExecContext): string {
+  let elements: Record<string, unknown>[]
+  try {
+    elements = buildChartPanel(args as unknown as ChartPanelParams)
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : 'create_chart_panel 失败',
+    })
+  }
+  session.workingElements.push(...elements)
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已创建图表卡片 "${args.title || ''}"（${args.kind || ''}），含 ${elements.length} 个图元`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emitElements(session, emit, elements)
+
+  return JSON.stringify({
+    success: true,
+    count: elements.length,
+    targets: elements.map(element => ({
+      id: element.id,
+      name: element.name,
+    })),
+  })
+}
+
+// 复合组件：工艺设备
+function handleEquipment({ name, args, session, onStep, emit }: ToolExecContext): string {
+  let elements: Record<string, unknown>[]
+  try {
+    elements = buildEquipment(args as unknown as EquipmentParams)
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : 'create_equipment 失败',
+    })
+  }
+  session.workingElements.push(...elements)
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已创建设备 "${args.kind || ''}"，含 ${elements.length} 个图元`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emitElements(session, emit, elements)
+
+  return JSON.stringify({
+    success: true,
+    count: elements.length,
+    targets: elements.map(element => ({
+      id: element.id,
+      name: element.name,
+    })),
+  })
+}
+
+// 修改已有图元（多轮对话）
+function handleUpdateElement({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const target = String(args.target || '')
+  const index = findElementIndex(session.workingElements, target)
+  if (index < 0) {
+    return JSON.stringify({ success: false, error: `未找到图元: ${target}` })
+  }
+
+  let changes: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(String(args.changesJson || '{}'))
+    if (!isPlainObject(parsed)) throw new Error('changesJson 必须是 JSON 对象')
+    changes = parsed
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      error: error instanceof Error ? error.message : 'changesJson 解析失败',
+    })
+  }
+
+  session.workingElements[index] = mergeElement(session.workingElements[index], changes)
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已修改图元 "${target}"`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emit({
+    type: 'element_patch',
+    patch: { op: 'update', target, element: session.workingElements[index] },
+  })
+  return JSON.stringify({ success: true, element: session.workingElements[index] })
+}
+
+// 删除已有图元（多轮对话）
+function handleDeleteElement({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const target = String(args.target || '')
+  const index = findElementIndex(session.workingElements, target)
+  if (index < 0) {
+    return JSON.stringify({ success: false, error: `未找到图元: ${target}` })
+  }
+  const [removed] = session.workingElements.splice(index, 1)
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已删除图元 "${target}"`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emit({ type: 'element_patch', patch: { op: 'delete', target } })
+  return JSON.stringify({ success: true, removed })
+}
+
+// 图纸组装
+function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const elementsData = (args.elementsData as Record<string, unknown>[])
+  // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
+  const effectiveElements = (elementsData && elementsData.length > 0) ? elementsData : session.workingElements
+  const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
+  const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
+  const document: Record<string, unknown> = buildDisplayDocument({
+    pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
+    elementsData: effectiveElements,
+    pageWidth: (args.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
+    pageHeight: (args.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
+    bgColor: (args.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),
+    author: (args.author as string | undefined) ?? (baseDocument?.author as string | undefined),
+    company: (args.company as string | undefined) ?? (baseDocument?.company as string | undefined),
+    desc: (args.desc as string | undefined) ?? (baseDocument?.desc as string | undefined),
+  })
+
+  if (baseDocument) {
+    const generated = document.document as Record<string, unknown>
+    document.document = {
+      ...generated,
+      code: baseDocument.code ?? generated.code,
+      layers: baseDocument.layers ?? generated.layers,
+      pageParams: baseDocument.pageParams ?? generated.pageParams,
+      oldPageParams: baseDocument.oldPageParams ?? generated.oldPageParams,
+      pageScript: baseDocument.pageScript ?? generated.pageScript,
+      elements: effectiveElements,
+    }
+  }
+
+  session.finalJson = document
+  session.canvas = getCanvasFromJson('display', document)
+  emit({ type: 'canvas', canvas: session.canvas })
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已组装图纸 "${args.pageName}"，包含 ${effectiveElements.length} 个图元`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+
+  return JSON.stringify(document)
+}
+
+// 图符组装
+function handleAssembleSymbol({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const compsData = (args.compsData as Record<string, unknown>[])
+  // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
+  const effectiveComps = (compsData && compsData.length > 0) ? compsData : session.workingElements
+  if (effectiveComps.length === 0) {
+    return JSON.stringify({
+      success: false,
+      error: '图符没有任何图元。请先成功调用 create_symbol_*，再调用 assemble_symbol。',
+    })
+  }
+  const baseSymbol = session.currentJson
+  const baseStore = baseSymbol?.store as Record<string, unknown> | undefined
+  const builtSymbol = buildSymbolDocument({
+    symbolName: (args.symbolName as string) || (baseSymbol?.name as string) || 'AI生成图符',
+    compsData: effectiveComps,
+    width: (args.width as number | undefined) ?? (baseSymbol?.width as number | undefined),
+    height: (args.height as number | undefined) ?? (baseSymbol?.height as number | undefined),
+    background: (args.background as string | undefined) ?? (baseSymbol?.background as string | undefined),
+  })
+  const symbol = baseSymbol ? {
+    ...baseSymbol,
+    ...builtSymbol,
+    code: baseSymbol.code ?? builtSymbol.code,
+    dataBindings: baseSymbol.dataBindings ?? builtSymbol.dataBindings,
+    relatedProps: baseSymbol.relatedProps ?? builtSymbol.relatedProps,
+    mainData: baseSymbol.mainData ?? builtSymbol.mainData,
+    renderHTML: baseSymbol.renderHTML ?? builtSymbol.renderHTML,
+    store: { ...baseStore, ...(builtSymbol.store as Record<string, unknown>) },
+    comps: effectiveComps,
+  } : builtSymbol
+
+  session.finalJson = symbol
+  session.canvas = getCanvasFromJson('symbol', symbol)
+  emit({ type: 'canvas', canvas: session.canvas })
+
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已组装图符 "${args.symbolName}"，包含 ${effectiveComps.length} 个图元`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+
+  return JSON.stringify(symbol)
+}
+
+function attachFeatureToElement(
+  element: Record<string, unknown>,
+  storeKey: 'dynamicDyna' | 'interactiveDyna',
+  feature: object,
+): void {
+  const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
+  const existingFeatures = Array.isArray(elementStore[storeKey])
+    ? [...elementStore[storeKey]]
+    : []
+  existingFeatures.push(feature)
+  element.store = { ...elementStore, [storeKey]: existingFeatures }
+}
+
+function resolveFeatureTarget(session: SessionState, args: Record<string, unknown>): {
+  target: string
+  index: number
+  element: Record<string, unknown>
+} | { error: string } {
+  const target = String(args.elementName || '')
+  const index = findElementIndex(session.workingElements, target)
+  if (index < 0) {
+    return { error: `未找到需要添加特性的图元: ${target}` }
+  }
+  return { target, index, element: session.workingElements[index] }
+}
+
+function finishFeatureAttach(
+  ctx: ToolExecContext,
+  target: string,
+  element: Record<string, unknown>,
+  featureType: string,
+  kind: '动态' | '交互',
+): string {
+  const { name, args, session, onStep, emit } = ctx
+  session.featureExecutions.push({
+    toolName: name,
+    elementKey: getElementAliases(element)[0] || target,
+  })
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已为图元 "${target}" 添加 ${featureType} ${kind}特性`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emit({
+    type: 'element_patch',
+    patch: { op: 'update', target, element },
+  })
+  return JSON.stringify({ success: true, element })
+}
+
+// 动态特性（旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐）
+function handleDynamicFeature(ctx: ToolExecContext): string {
+  const { name, args, session } = ctx
+  if (!isDynamicFeatureTool(name)) {
+    return JSON.stringify({ success: false, error: `动态特性工具尚未实现: ${name}` })
+  }
+  const resolved = resolveFeatureTarget(session, args)
+  if ('error' in resolved) {
+    return JSON.stringify({ success: false, error: resolved.error })
+  }
+
+  const { target, element } = resolved
+  const featureArgs = name === 'add_feature_blink'
+    ? { ...args, elementFillColor: getElementFillColor(element) }
+    : args
+  const feature = buildDynamicFeature(name, featureArgs)
+  attachFeatureToElement(element, 'dynamicDyna', feature)
+  return finishFeatureAttach(ctx, target, element, feature.type, '动态')
+}
+
+// 交互特性（写值 / 打开页面）
+function handleInteractiveFeature(ctx: ToolExecContext): string {
+  const { name, args, session } = ctx
+  if (!isInteractiveFeatureTool(name)) {
+    return JSON.stringify({ success: false, error: `交互特性工具尚未实现: ${name}` })
+  }
+  const resolved = resolveFeatureTarget(session, args)
+  if ('error' in resolved) {
+    return JSON.stringify({ success: false, error: resolved.error })
+  }
+
+  const { target, element } = resolved
+  const feature = buildInteractiveFeature(name, args)
+  attachFeatureToElement(element, 'interactiveDyna', feature)
+  return finishFeatureAttach(ctx, target, element, feature.type, '交互')
+}
+
+/**
+ * 工具执行分发表：工具名 → handler。
+ * 基础图元 / 图符图元 / 动态特性按注册表自动接线，其余按名精确登记。
+ * 由 lintRegistry 保证与 Skill 注册表一一对应，杜绝定义与执行漂移。
+ */
+const TOOL_HANDLERS: Record<string, ToolHandler> = {
+  declare_generation_plan: handleDeclarePlan,
+  create_metric_panel: handleMetricPanel,
+  create_equipment: handleEquipment,
+  create_chart_panel: handleChartPanel,
+  update_element: handleUpdateElement,
+  delete_element: handleDeleteElement,
+  assemble_display: handleAssembleDisplay,
+  assemble_symbol: handleAssembleSymbol,
+}
+
+for (const skill of getAllSkills()) {
+  const toolName = skill.toolDef.function.name
+  if (TOOL_HANDLERS[toolName]) continue
+  if (TOOL_TO_ELEMENT_TYPE[toolName]) TOOL_HANDLERS[toolName] = handleCreateDisplayElement
+  else if (TOOL_TO_SYMBOL_TYPE[toolName]) TOOL_HANDLERS[toolName] = handleCreateSymbolElement
+  else if (isDynamicFeatureTool(toolName)) TOOL_HANDLERS[toolName] = handleDynamicFeature
+  else if (isInteractiveFeatureTool(toolName)) TOOL_HANDLERS[toolName] = handleInteractiveFeature
+}
+
+// 启动自检：确保工具定义、分类元数据与执行 handler 三者一致（定义即执行）
+const REGISTRY_WIRING_ERRORS = lintRegistry(Object.keys(TOOL_HANDLERS))
+if (REGISTRY_WIRING_ERRORS.length > 0) {
+  throw new Error(`[skill-registry] 工具接线校验失败:\n- ${REGISTRY_WIRING_ERRORS.join('\n- ')}`)
+}
+
 /**
  * 执行单个工具调用
  * @returns 工具执行结果字符串
@@ -309,343 +778,9 @@ function executeToolCall(
   onStep: (step: AgentStep) => void,
   emit: (event: SSEEvent) => void,
 ): string {
-  const elementType = TOOL_TO_ELEMENT_TYPE[name]
-  const symbolType = TOOL_TO_SYMBOL_TYPE[name]
-
-  if (name === 'declare_generation_plan') {
-    const plan = buildGenerationPlan(args)
-    session.generationPlan = plan
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已声明生成计划: ${plan.summary || '未命名计划'}`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    return JSON.stringify({ success: true, plan })
-  }
-
-  // 只有整批都是全画布底板时才下沉，避免复合组件的混合批次被误判
-  const emitElements = (elements: Record<string, unknown>[]) => {
-    if (elements.length === 0) return
-    emit({
-      type: 'element',
-      elements,
-      isBackground: session.editorType === 'display'
-        && elements.every(el => isBackgroundElement(el, session.canvas.pageWidth, session.canvas.pageHeight)),
-    })
-  }
-
-  // 1. 图元创建工具
-  if (elementType) {
-    const element = buildDisplayElement(elementType, args)
-    session.workingElements.push(element)
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已创建 ${elementType} 图元: ${element.name || '(自动命名)'}`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emitElements([element])
-
-    return JSON.stringify(element)
-  }
-
-  // 1b. 图符图元创建工具
-  if (symbolType) {
-    const element = buildSymbolElement(symbolType, args)
-    session.workingElements.push(element)
-    const attrs = isPlainObject(element.attrs) ? element.attrs : {}
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已创建 ${symbolType} 图符图元: ${attrs.name || '(自动命名)'}`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emitElements([element])
-
-    return JSON.stringify(element)
-  }
-
-  // 1c. 复合组件工具（布局引擎驱动，一次产出多个图元）
-  if (name === 'create_metric_panel') {
-    let elements: Record<string, unknown>[]
-    try {
-      elements = buildMetricPanel(args as unknown as MetricPanelParams)
-    } catch (error) {
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'create_metric_panel 失败',
-      })
-    }
-    session.workingElements.push(...elements)
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已创建指标面板 "${args.title || ''}"，含 ${elements.length} 个图元`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emitElements(elements)
-
-    return JSON.stringify({
-      success: true,
-      count: elements.length,
-      targets: elements.map(element => ({
-        id: element.id,
-        name: element.name,
-      })),
-    })
-  }
-
-  if (name === 'create_equipment') {
-    let elements: Record<string, unknown>[]
-    try {
-      elements = buildEquipment(args as unknown as EquipmentParams)
-    } catch (error) {
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'create_equipment 失败',
-      })
-    }
-    session.workingElements.push(...elements)
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已创建设备 "${args.kind || ''}"，含 ${elements.length} 个图元`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emitElements(elements)
-
-    return JSON.stringify({
-      success: true,
-      count: elements.length,
-      targets: elements.map(element => ({
-        id: element.id,
-        name: element.name,
-      })),
-    })
-  }
-
-  // 2. 修改已有图元（多轮对话）
-  if (name === 'update_element') {
-    const target = String(args.target || '')
-    const index = findElementIndex(session.workingElements, target)
-    if (index < 0) {
-      return JSON.stringify({ success: false, error: `未找到图元: ${target}` })
-    }
-
-    let changes: Record<string, unknown>
-    try {
-      const parsed = JSON.parse(String(args.changesJson || '{}'))
-      if (!isPlainObject(parsed)) throw new Error('changesJson 必须是 JSON 对象')
-      changes = parsed
-    } catch (error) {
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'changesJson 解析失败',
-      })
-    }
-
-    session.workingElements[index] = mergeElement(session.workingElements[index], changes)
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已修改图元 "${target}"`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emit({
-      type: 'element_patch',
-      patch: { op: 'update', target, element: session.workingElements[index] },
-    })
-    return JSON.stringify({ success: true, element: session.workingElements[index] })
-  }
-
-  // 3. 删除已有图元（多轮对话）
-  if (name === 'delete_element') {
-    const target = String(args.target || '')
-    const index = findElementIndex(session.workingElements, target)
-    if (index < 0) {
-      return JSON.stringify({ success: false, error: `未找到图元: ${target}` })
-    }
-    const [removed] = session.workingElements.splice(index, 1)
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已删除图元 "${target}"`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emit({ type: 'element_patch', patch: { op: 'delete', target } })
-    return JSON.stringify({ success: true, removed })
-  }
-
-  // 4. 图纸组装工具
-  if (name === 'assemble_display') {
-    const elementsData = (args.elementsData as Record<string, unknown>[])
-    // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
-    const effectiveElements = (elementsData && elementsData.length > 0) ? elementsData : session.workingElements
-    const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
-    const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
-    const document: Record<string, unknown> = buildDisplayDocument({
-      pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
-      elementsData: effectiveElements,
-      pageWidth: (args.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
-      pageHeight: (args.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
-      bgColor: (args.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),
-      author: (args.author as string | undefined) ?? (baseDocument?.author as string | undefined),
-      company: (args.company as string | undefined) ?? (baseDocument?.company as string | undefined),
-      desc: (args.desc as string | undefined) ?? (baseDocument?.desc as string | undefined),
-    })
-
-    if (baseDocument) {
-      const generated = document.document as Record<string, unknown>
-      document.document = {
-        ...generated,
-        code: baseDocument.code ?? generated.code,
-        layers: baseDocument.layers ?? generated.layers,
-        pageParams: baseDocument.pageParams ?? generated.pageParams,
-        oldPageParams: baseDocument.oldPageParams ?? generated.oldPageParams,
-        pageScript: baseDocument.pageScript ?? generated.pageScript,
-        elements: effectiveElements,
-      }
-    }
-
-    session.finalJson = document
-    session.canvas = getCanvasFromJson('display', document)
-    emit({ type: 'canvas', canvas: session.canvas })
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已组装图纸 "${args.pageName}"，包含 ${effectiveElements.length} 个图元`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-
-    return JSON.stringify(document)
-  }
-
-  // 5. 图符组装工具
-  if (name === 'assemble_symbol') {
-    const compsData = (args.compsData as Record<string, unknown>[])
-    // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
-    const effectiveComps = (compsData && compsData.length > 0) ? compsData : session.workingElements
-    if (effectiveComps.length === 0) {
-      return JSON.stringify({
-        success: false,
-        error: '图符没有任何图元。请先成功调用 create_symbol_*，再调用 assemble_symbol。',
-      })
-    }
-    const baseSymbol = session.currentJson
-    const baseStore = baseSymbol?.store as Record<string, unknown> | undefined
-    const builtSymbol = buildSymbolDocument({
-      symbolName: (args.symbolName as string) || (baseSymbol?.name as string) || 'AI生成图符',
-      compsData: effectiveComps,
-      width: (args.width as number | undefined) ?? (baseSymbol?.width as number | undefined),
-      height: (args.height as number | undefined) ?? (baseSymbol?.height as number | undefined),
-      background: (args.background as string | undefined) ?? (baseSymbol?.background as string | undefined),
-    })
-    const symbol = baseSymbol ? {
-      ...baseSymbol,
-      ...builtSymbol,
-      code: baseSymbol.code ?? builtSymbol.code,
-      dataBindings: baseSymbol.dataBindings ?? builtSymbol.dataBindings,
-      relatedProps: baseSymbol.relatedProps ?? builtSymbol.relatedProps,
-      mainData: baseSymbol.mainData ?? builtSymbol.mainData,
-      renderHTML: baseSymbol.renderHTML ?? builtSymbol.renderHTML,
-      store: { ...baseStore, ...(builtSymbol.store as Record<string, unknown>) },
-      comps: effectiveComps,
-    } : builtSymbol
-
-    session.finalJson = symbol
-    session.canvas = getCanvasFromJson('symbol', symbol)
-    emit({ type: 'canvas', canvas: session.canvas })
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已组装图符 "${args.symbolName}"，包含 ${effectiveComps.length} 个图元`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-
-    return JSON.stringify(symbol)
-  }
-
-  // 6. 动态特性
-  if (isDynamicFeatureTool(name)) {
-    const target = String(args.elementName || '')
-    const index = findElementIndex(session.workingElements, target)
-    if (index < 0) {
-      return JSON.stringify({ success: false, error: `未找到需要添加特性的图元: ${target}` })
-    }
-
-    const element = session.workingElements[index]
-    const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
-    const existingFeatures = Array.isArray(elementStore.dynamicDyna)
-      ? [...elementStore.dynamicDyna]
-      : []
-    const featureArgs = name === 'add_feature_blink'
-      ? { ...args, elementFillColor: getElementFillColor(element) }
-      : args
-    const feature = buildDynamicFeature(name, featureArgs)
-    existingFeatures.push(feature)
-    element.store = { ...elementStore, dynamicDyna: existingFeatures }
-    session.featureExecutions.push({
-      toolName: name,
-      elementKey: getElementAliases(element)[0] || target,
-    })
-
-    const step: AgentStep = {
-      type: 'tool_call',
-      content: `已为图元 "${target}" 添加 ${feature.type} 动态特性`,
-      toolName: name,
-      toolArgs: args,
-      timestamp: Date.now(),
-    }
-    session.steps.push(step)
-    onStep(step)
-    emit({
-      type: 'element_patch',
-      patch: { op: 'update', target, element },
-    })
-    return JSON.stringify({ success: true, element })
-  }
-
-  // 7. 其他尚未实现的动态特性工具
-  if (name.startsWith('add_feature_')) {
-    return JSON.stringify({ success: false, error: `动态特性工具尚未实现: ${name}` })
-  }
-
-  // 未知工具
-  return JSON.stringify({ error: `未知工具: ${name}` })
+  const handler = TOOL_HANDLERS[name]
+  if (!handler) return JSON.stringify({ error: `未知工具: ${name}` })
+  return handler({ name, args, session, onStep, emit })
 }
 
 // ============================================================
@@ -668,7 +803,11 @@ export async function runAgentLoop(
   context: AgentContext = {},
 ): Promise<AgentResult> {
   const session = createSession(editorType, context.currentJson)
-  const tools = getToolsForType(editorType)
+  // 按需下发：按用户意图筛选工具子集，静态需求省去动态特性工具、首轮省去编辑工具
+  const tools = selectTools(editorType, {
+    prompt,
+    isEditing: Boolean(context.currentJson),
+  })
   const maxRetries = config.maxRetries
   const validateFinalOutput = (json: unknown) => {
     const output = isPlainObject(json) ? json : undefined

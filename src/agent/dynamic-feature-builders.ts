@@ -1,7 +1,8 @@
 /**
- * Dynamic Feature Builders
+ * Feature Builders
  *
  * 将模型工具参数转换为 HMI 编辑器可直接消费的 FeatureConfig。
+ * 动态特性写入 store.dynamicDyna，交互特性写入 store.interactiveDyna。
  */
 
 type DynamicFeatureToolName =
@@ -9,6 +10,12 @@ type DynamicFeatureToolName =
   | 'add_feature_move'
   | 'add_feature_blink'
   | 'add_feature_change_color'
+  | 'add_feature_num_display'
+  | 'add_feature_visible'
+
+type InteractiveFeatureToolName =
+  | 'add_feature_write_value'
+  | 'add_feature_open_page'
 
 interface FeatureParam {
   original: unknown
@@ -24,12 +31,33 @@ export interface DynamicFeatureConfig {
   pars: Record<string, FeatureParam>
 }
 
-const FEATURE_TYPES: Record<DynamicFeatureToolName, string> = {
+export interface InteractiveFeatureConfig {
+  id: string
+  name: string
+  type: string
+  act: number
+  pars: Record<string, FeatureParam>
+}
+
+const DYNAMIC_FEATURE_TYPES: Record<DynamicFeatureToolName, string> = {
   add_feature_rotate: 'GraphDynaRotate',
   add_feature_move: 'GraphDynaMove',
   add_feature_blink: 'GraphDynaBlink',
   add_feature_change_color: 'GraphDynaChangeClr',
+  add_feature_num_display: 'GraphDynaValDisplay',
+  add_feature_visible: 'GraphDynaVisible',
 }
+
+const WRITE_VALUE_DIGITAL = 'GraphTriggerWriteDigVal'
+const WRITE_VALUE_ANALOG = 'GraphTriggerWriteAnaVal'
+const OPEN_PAGE_TYPE = 'GraphTriggerOpenPage'
+
+const ANALOG_WRITE_MODE = { RATIO: 0, FIXED_INCRE: 1, FIXED: 2, INPUT: 3 }
+const DIGITAL_WRITE_MODE = { REVERSE: 0, FIXED: 1 }
+const RANGE_MODE = { CUSTOM: 0, DATABASE: 1, NONUSE: 2 }
+const GRAPH_TYPE = { GRAPH: 0, WEBPAGE: 1, SCENE: 2, DEFAULT_PANEL: 3 }
+const OPENPAGE_TYPE = { PAGE: 0, DIALOG: 1, BROWSERWINDOW: 2 }
+const DEFAULT_INTERACTIVE_ACT = 17
 
 function original(value: unknown): FeatureParam {
   return { original: value }
@@ -40,6 +68,20 @@ function dataPoint(value: unknown): Record<string, string> {
     nodeId: '',
     tagName: typeof value === 'string' ? value : '',
     nodeType: '',
+  }
+}
+
+/**
+ * 数值显示等特性使用的模型点结构：需同时包含 nodeId / tagName / itemName。
+ * 用户提供形如 `100:XAM_001.AV` 的全路径，按最后一个 `.` 拆分为 tagName 与 itemName。
+ */
+function modelPoint(value: unknown): Record<string, string> {
+  const nodeId = typeof value === 'string' ? value.trim() : ''
+  const dotIndex = nodeId.lastIndexOf('.')
+  return {
+    nodeId,
+    tagName: dotIndex > 0 ? nodeId.slice(0, dotIndex) : nodeId,
+    itemName: dotIndex > 0 ? nodeId.slice(dotIndex + 1) : '',
   }
 }
 
@@ -245,8 +287,154 @@ function buildChangeColorPars(args: Record<string, unknown>): Record<string, Fea
   }
 }
 
+function buildNumDisplayPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const pars: Record<string, FeatureParam> = {
+    ds: original(modelPoint(args.dataSourceKey)),
+    align: original(Number(args.align ?? 3)),
+    blink: original(Number(args.blink ?? 0)),
+    showE0E1: original(Number(args.showE0E1 ?? 0)),
+    useTime: original(Number(args.useTime ?? 0)),
+    isOfData: original(Number(args.isOfData ?? 0)),
+    showUT: original(Number(args.showUT ?? 0)),
+  }
+
+  if (Number(args.showE0E1 ?? 0)) {
+    const showDbE0E1 = Number(args.showDbE0E1 ?? 0)
+    pars.showDbE0E1 = original(showDbE0E1)
+    if (showDbE0E1) {
+      pars.e0Des = original(modelPoint(args.e0DesDataSourceKey))
+      pars.e1Des = original(modelPoint(args.e1DesDataSourceKey))
+    } else {
+      pars.e0Des = original(String(args.e0Des ?? ''))
+      pars.e1Des = original(String(args.e1Des ?? ''))
+    }
+  }
+
+  if (Number(args.useTime ?? 0)) {
+    pars.timeFormat = original(Number(args.timeFormat ?? 0))
+  }
+
+  if (Number(args.isOfData ?? 0)) {
+    pars.ofItem = original(modelPoint(args.ofItemDataSourceKey))
+  } else {
+    pars.ofShow = original(Number(args.ofShow ?? -1))
+  }
+
+  if (Number(args.showUT ?? 0)) {
+    pars.unit = original(modelPoint(args.unitDataSourceKey))
+  }
+
+  return pars
+}
+
+function buildVisiblePars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  return {
+    isVisible: original(Number(args.isVisible ?? 1)),
+  }
+}
+
+function isAnalogWrite(args: Record<string, unknown>): boolean {
+  const valueType = args.valueType
+  return valueType === 'analog' || valueType === 1 || valueType === '1'
+}
+
+function buildWriteValuePars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const analog = isAnalogWrite(args)
+  const writeMode = Number(args.writeMode ?? 0)
+  const confirmEnable = Number(args.confirmEnable ?? 0)
+  const pars: Record<string, FeatureParam> = {
+    ds: original(modelPoint(args.dataSourceKey)),
+    writeMode: original(writeMode),
+    confirmEnable: original(confirmEnable),
+    value: original(Number(args.value ?? 0)),
+  }
+
+  if (analog) {
+    const rangeMode = Number(args.rangeMode ?? 0)
+    pars.rangeMode = original(rangeMode)
+    if (writeMode === ANALOG_WRITE_MODE.RATIO) {
+      pars.rate = original(Number(args.rate ?? 0))
+    }
+    if (writeMode === ANALOG_WRITE_MODE.FIXED_INCRE || writeMode === ANALOG_WRITE_MODE.FIXED) {
+      pars.value = original(Number(args.value ?? 0))
+    }
+    if (rangeMode === RANGE_MODE.CUSTOM) {
+      pars.mu = original(Number(args.mu ?? 100))
+      pars.md = original(Number(args.md ?? 0))
+    } else if (rangeMode === RANGE_MODE.DATABASE) {
+      pars.muItem = original(modelPoint(args.muDataSourceKey))
+      pars.mdItem = original(modelPoint(args.mdDataSourceKey))
+    }
+    if (confirmEnable) {
+      pars.confirmDes = original(String(args.confirmDes ?? ''))
+    }
+    return pars
+  }
+
+  if (writeMode === DIGITAL_WRITE_MODE.REVERSE) {
+    pars.readItem = original(args.readItemDataSourceKey ? modelPoint(args.readItemDataSourceKey) : {})
+  }
+  if (writeMode === DIGITAL_WRITE_MODE.FIXED) {
+    pars.value = original(Number(args.value ?? 0))
+  }
+  if (confirmEnable) {
+    pars.confirmDes0 = original(String(args.confirmDes0 ?? ''))
+    pars.confirmDes1 = original(String(args.confirmDes1 ?? ''))
+  }
+  return pars
+}
+
+function buildOpenPagePars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const popType = Number(args.popType ?? OPENPAGE_TYPE.PAGE)
+  const pageType = Number(args.pageType ?? GRAPH_TYPE.GRAPH)
+  const checkEnable = Number(args.checkEnable ?? 0)
+  const pars: Record<string, FeatureParam> = {
+    popType: original(popType),
+    pageType: original(pageType),
+    checkEnable: original(checkEnable),
+    checkDs: original(checkEnable ? modelPoint(args.checkDataSourceKey) : ''),
+  }
+
+  if (pageType === GRAPH_TYPE.WEBPAGE) {
+    pars.webPath = original(String(args.webPath ?? ''))
+  } else if (pageType === GRAPH_TYPE.DEFAULT_PANEL) {
+    pars.panelPath = original(String(args.panelPath ?? ''))
+    pars.panelCode = original(String(args.panelCode ?? ''))
+    pars.defaultPanelPath = original(String(args.defaultPanelPath ?? ''))
+    pars.defaultPanelType = original(Number(args.defaultPanelType ?? 0))
+    pars.parmInfoList = original(Array.isArray(args.parmInfoList) ? args.parmInfoList : [])
+  } else {
+    pars.pageName = original({
+      name: String(args.pageName ?? ''),
+      code: String(args.pageCode ?? ''),
+      path: String(args.pagePath ?? ''),
+    })
+    pars.pageParam = original(Array.isArray(args.pageParam) ? args.pageParam : [])
+  }
+
+  if (popType === OPENPAGE_TYPE.DIALOG) {
+    pars.windowPos = original(Number(args.windowPos ?? 0))
+    pars.posX = original(Number(args.posX ?? 0))
+    pars.posY = original(Number(args.posY ?? 0))
+    pars.defaultFullscreen = original(Number(args.defaultFullscreen ?? 0))
+    pars.customSize = original(Number(args.customSize ?? 0))
+    pars.width = original(Number(args.width ?? 400))
+    pars.height = original(Number(args.height ?? 300))
+    pars.title = original(String(args.title ?? ''))
+    pars.titleTextClr = original(String(args.titleTextClr ?? '#000000'))
+    pars.titleBgClr = original(String(args.titleBgClr ?? '#FFFFFF'))
+    pars.borderClr = original(String(args.borderClr ?? '#000000'))
+  }
+
+  return pars
+}
+
 export function isDynamicFeatureTool(name: string): name is DynamicFeatureToolName {
-  return Object.prototype.hasOwnProperty.call(FEATURE_TYPES, name)
+  return Object.prototype.hasOwnProperty.call(DYNAMIC_FEATURE_TYPES, name)
+}
+
+export function isInteractiveFeatureTool(name: string): name is InteractiveFeatureToolName {
+  return name === 'add_feature_write_value' || name === 'add_feature_open_page'
 }
 
 export function buildDynamicFeature(
@@ -258,8 +446,10 @@ export function buildDynamicFeature(
     add_feature_move: buildMovePars,
     add_feature_blink: buildBlinkPars,
     add_feature_change_color: buildChangeColorPars,
+    add_feature_num_display: buildNumDisplayPars,
+    add_feature_visible: buildVisiblePars,
   }
-  const type = FEATURE_TYPES[name]
+  const type = DYNAMIC_FEATURE_TYPES[name]
   return {
     id: globalThis.crypto.randomUUID(),
     name: type,
@@ -267,5 +457,21 @@ export function buildDynamicFeature(
     conditions: buildConditions(args),
     not: isConditionSpecifiedByUser(args) ? Boolean(args.not ?? false) : false,
     pars: parsBuilders[name](args),
+  }
+}
+
+export function buildInteractiveFeature(
+  name: InteractiveFeatureToolName,
+  args: Record<string, unknown>,
+): InteractiveFeatureConfig {
+  const type = name === 'add_feature_write_value'
+    ? (isAnalogWrite(args) ? WRITE_VALUE_ANALOG : WRITE_VALUE_DIGITAL)
+    : OPEN_PAGE_TYPE
+  return {
+    id: globalThis.crypto.randomUUID(),
+    name: type,
+    type,
+    act: Number(args.act ?? DEFAULT_INTERACTIVE_ACT),
+    pars: name === 'add_feature_write_value' ? buildWriteValuePars(args) : buildOpenPagePars(args),
   }
 }

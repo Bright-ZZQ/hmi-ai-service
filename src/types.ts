@@ -37,6 +37,23 @@ export interface ToolDefinition {
   }
 }
 
+/** 工具分类（治理 / 路由用） */
+export type ToolCategory = 'plan' | 'shape' | 'composite' | 'edit' | 'assembly' | 'feature'
+
+/** Agent 生命周期阶段 */
+export type AgentPhase = 'plan' | 'create' | 'feature' | 'assemble' | 'edit'
+
+/** 工具分类元数据：按需下发（阶段门控 / 关键词预筛）与一致性校验的数据源 */
+export interface SkillMeta {
+  category: ToolCategory
+  /** 适用的生命周期阶段 */
+  phases: AgentPhase[]
+  /** 任意阶段都应下发的核心工具 */
+  core?: boolean
+  /** 相关性预筛关键词（中文意图词） */
+  keywords?: string[]
+}
+
 /** Skill 注册条目 */
 export interface SkillRegistryEntry {
   toolDef: ToolDefinition

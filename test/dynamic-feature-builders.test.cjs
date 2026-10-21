@@ -4,7 +4,7 @@
 
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { buildDynamicFeature } = require('../dist/agent/dynamic-feature-builders')
+const { buildDynamicFeature, buildInteractiveFeature } = require('../dist/agent/dynamic-feature-builders')
 const { buildEquipment } = require('../dist/agent/element-builders')
 const { buildGenerationPlan, validateGenerationPlan } = require('../dist/agent/generation-plan')
 const { validateOutput } = require('../dist/agent/schema-validator')
@@ -15,6 +15,13 @@ const featureTools = [
   'add_feature_move',
   'add_feature_blink',
   'add_feature_change_color',
+  'add_feature_num_display',
+  'add_feature_visible',
+]
+
+const interactiveFeatureTools = [
+  'add_feature_write_value',
+  'add_feature_open_page',
 ]
 
 describe('dynamic feature tool registration', () => {
@@ -23,6 +30,7 @@ describe('dynamic feature tool registration', () => {
       const names = getToolsForType(editorType).map(tool => tool.function.name)
       assert.ok(names.includes('declare_generation_plan'))
       for (const name of featureTools) assert.ok(names.includes(name))
+      for (const name of interactiveFeatureTools) assert.ok(names.includes(name))
     })
   }
 
@@ -59,6 +67,7 @@ describe('buildDynamicFeature', () => {
       ['add_feature_rotate', 'GraphDynaRotate'],
       ['add_feature_move', 'GraphDynaMove'],
       ['add_feature_blink', 'GraphDynaBlink'],
+      ['add_feature_visible', 'GraphDynaVisible'],
       ['add_feature_change_color', 'GraphDynaChangeClr'],
     ]
 
@@ -180,6 +189,92 @@ describe('buildDynamicFeature', () => {
     })
 
     assert.equal(feature.pars.blinkMethod.original, 1)
+  })
+
+  it('builds visible feature with isVisible and optional conditions', () => {
+    const alwaysOn = buildDynamicFeature('add_feature_visible', {})
+    const hiddenWhenTrue = buildDynamicFeature('add_feature_visible', {
+      isVisible: 0,
+      conditionSpecifiedByUser: true,
+      dataSourceKey: 'pump.run',
+      conditionOperator: 0,
+      conditionValue: '1',
+    })
+
+    assert.equal(alwaysOn.type, 'GraphDynaVisible')
+    assert.equal(alwaysOn.pars.isVisible.original, 1)
+    assert.deepEqual(alwaysOn.conditions, [])
+    assert.equal(hiddenWhenTrue.pars.isVisible.original, 0)
+    assert.equal(hiddenWhenTrue.conditions[0].leftValue.tagName, 'pump.run')
+  })
+})
+
+describe('buildInteractiveFeature', () => {
+  it('builds digital write-value as GraphTriggerWriteDigVal', () => {
+    const feature = buildInteractiveFeature('add_feature_write_value', {
+      dataSourceKey: '100:DO_001.PV',
+      writeMode: 1,
+      value: 1,
+      confirmEnable: 1,
+      confirmDes0: '确认置 0',
+      confirmDes1: '确认置 1',
+    })
+
+    assert.equal(feature.type, 'GraphTriggerWriteDigVal')
+    assert.equal(feature.act, 17)
+    assert.equal(feature.pars.ds.original.tagName, '100:DO_001')
+    assert.equal(feature.pars.ds.original.itemName, 'PV')
+    assert.equal(feature.pars.writeMode.original, 1)
+    assert.equal(feature.pars.value.original, 1)
+    assert.equal(feature.pars.confirmDes0.original, '确认置 0')
+    assert.equal('rangeMode' in feature.pars, false)
+  })
+
+  it('builds analog write-value as GraphTriggerWriteAnaVal', () => {
+    const feature = buildInteractiveFeature('add_feature_write_value', {
+      valueType: 'analog',
+      dataSourceKey: '100:AI_001.AV',
+      writeMode: 2,
+      value: 36.5,
+      rangeMode: 0,
+      mu: 100,
+      md: 0,
+    })
+
+    assert.equal(feature.type, 'GraphTriggerWriteAnaVal')
+    assert.equal(feature.pars.ds.original.itemName, 'AV')
+    assert.equal(feature.pars.value.original, 36.5)
+    assert.equal(feature.pars.mu.original, 100)
+    assert.equal('confirmDes0' in feature.pars, false)
+  })
+
+  it('builds open-page with pageName object and dialog fields', () => {
+    const page = buildInteractiveFeature('add_feature_open_page', {
+      pageName: '锅炉主画面',
+      pageCode: 'BLR_001',
+      pagePath: '/display/blr',
+    })
+    const dialog = buildInteractiveFeature('add_feature_open_page', {
+      popType: 1,
+      pageType: 1,
+      webPath: 'https://example.com',
+      act: 6,
+      windowPos: 6,
+      customSize: 1,
+      width: 800,
+      height: 600,
+      title: '详情',
+    })
+
+    assert.equal(page.type, 'GraphTriggerOpenPage')
+    assert.equal(page.pars.pageName.original.name, '锅炉主画面')
+    assert.equal(page.pars.pageName.original.code, 'BLR_001')
+    assert.equal('windowPos' in page.pars, false)
+    assert.equal(dialog.act, 6)
+    assert.equal(dialog.pars.webPath.original, 'https://example.com')
+    assert.equal(dialog.pars.windowPos.original, 6)
+    assert.equal(dialog.pars.width.original, 800)
+    assert.equal('pageName' in dialog.pars, false)
   })
 })
 
