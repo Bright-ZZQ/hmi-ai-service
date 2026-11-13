@@ -17,7 +17,9 @@ import { getAllSkills, isAssemblyTool, lintRegistry, selectTools } from './skill
 import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, buildChartPanel, isBackgroundElement } from './element-builders'
 import type { MetricPanelParams, EquipmentParams, ChartPanelParams } from './element-builders'
 import { buildDynamicFeature, buildInteractiveFeature, isDynamicFeatureTool, isInteractiveFeatureTool } from './dynamic-feature-builders'
+import { enrichModelPoints } from './model-point-resolver'
 import { buildGenerationPlan, validateGenerationPlan } from './generation-plan'
+import { countNewElements, omitUnchangedBaseElementErrors, stackNewElementsOnTop } from './edit-context'
 import {
   ACTION_KINDS,
   DISPLAY_TRIGGERS,
@@ -109,7 +111,7 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 ## 图元数量语义（强制）
 
-- 用户明确要求“生成 N 个图元”时，最终 \`elements\` / \`comps\` 必须恰好有 N 项。
+- 用户明确要求“生成 N 个图元”时（无当前 JSON 的新建场景；编辑已有内容时 N 指本轮新增数量），最终 \`elements\` / \`comps\` 必须恰好有 N 项（编辑时为 已有 + N 项）。
 - \`create_equipment\`、\`create_metric_panel\` 和 \`create_chart_panel\` 一次会展开为多个基础图元，因此用户按“图元”计数时禁止使用；只有用户明确按“设备”或“面板”计数时才使用复合工具。
 - 将明确的最终数量填入生成计划的 \`expectedElementCount\`；数量不明确时省略，不得猜测。
 
@@ -121,11 +123,14 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 ## 多轮修改
 
-- 当系统提供“当前 JSON”时，表示用户正在修改上一轮结果
-- 修改已有图元优先调用 update_element；删除图元调用 delete_element；新增图元继续调用 create_* 工具
+- 当系统提供“当前 JSON”时，表示画布上已有内容（可能是用户手工绘制或上一轮生成的），用户要在它的基础上修改，**不是**重新生成
+- 默认保留所有已有图元，只做用户要求的改动：新增内容用 create_* 工具追加；修改已有图元优先调用 update_element；删除图元调用 delete_element
+- 只有用户明确要求“清空/重画/重新生成/替换全部”时，才可以用 delete_element 删除已有图元；否则禁止删除或重建用户未提及的图元
+- 不得重复创建已存在的图元；新增图元的位置必须在现有画布尺寸（当前 JSON 的 pageWidth/pageHeight 或 width/height）之内，并避开已有图元占据的区域，不得覆盖已有内容；画布尺寸、背景色、图纸名称保持不变，除非用户明确要求修改
+- 编辑模式下 declare_generation_plan 的 expectedElementCount 表示**本轮新增**的图元数量；用户未明确要求新增数量时（含仅修改/删除、或新增数量不确定）必须省略，不要填 0
 - target 优先使用稳定的 id/code/key，其次使用 name
 - 只修改用户明确要求的字段，其他图元及字段必须保持不变
-- 修改或删除完成后，必须调用 assemble_display 或 assemble_symbol 输出完整最新 JSON
+- 修改、删除或新增完成后，必须调用 assemble_display 或 assemble_symbol 输出完整最新 JSON（含全部已有图元）
 
 ## 布局指南
 
@@ -597,9 +602,13 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   const effectiveElements = (elementsData && elementsData.length > 0) ? elementsData : session.workingElements
   const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
   const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
+  // 编辑已有图纸时，新增图元叠放在已有图元之上，已有图元的层级保持不变
+  const finalElements = baseDocument
+    ? stackNewElementsOnTop(effectiveElements, getElementsFromJson('display', session.currentJson))
+    : effectiveElements
   const document: Record<string, unknown> = buildDisplayDocument({
     pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
-    elementsData: effectiveElements,
+    elementsData: finalElements,
     pageWidth: (args.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
     pageHeight: (args.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
     bgColor: (args.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),
@@ -612,6 +621,10 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   const generatedPageProperty = generatedDocument.pageProperty as Record<string, unknown>
   // 保留原图纸 pageProperty 中的其他配置（如已有 events、scriptFunc），仅以生成值覆盖尺寸/背景等
   const pageProperty: Record<string, unknown> = { ...basePageProperty, ...generatedPageProperty }
+  // 原图纸的 latestIndex 是编辑器生成名称/编号的计数基准，不能被调低
+  if (typeof basePageProperty?.latestIndex === 'number' && basePageProperty.latestIndex > Number(pageProperty.latestIndex)) {
+    pageProperty.latestIndex = basePageProperty.latestIndex
+  }
   if (session.displayEvents.length > 0) {
     const baseEvents = Array.isArray(basePageProperty?.events) ? basePageProperty.events : []
     pageProperty.events = [...baseEvents, ...session.displayEvents]
@@ -634,7 +647,7 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
       pageParams: baseDocument.pageParams ?? generated.pageParams,
       oldPageParams: baseDocument.oldPageParams ?? generated.oldPageParams,
       pageScript: baseDocument.pageScript ?? generated.pageScript,
-      elements: effectiveElements,
+      elements: finalElements,
     }
   }
 
@@ -1110,6 +1123,8 @@ export async function runAgentLoop(
     isEditing: Boolean(context.currentJson),
   })
   const maxRetries = config.maxRetries
+  const baseElements = getElementsFromJson(editorType, context.currentJson)
+  const isEditing = Boolean(context.currentJson)
   const validateFinalOutput = (json: unknown) => {
     const output = isPlainObject(json) ? json : undefined
     const generatedElements = getElementsFromJson(editorType, output)
@@ -1117,12 +1132,17 @@ export async function runAgentLoop(
     const finalFeatureExecutions = session.featureExecutions.filter(
       execution => execution.elementKey.startsWith(DISPLAY_EVENT_KEY) || generatedElementKeys.has(execution.elementKey),
     )
+    // 编辑已有内容时，数量约束针对本轮新增的图元，已有图元不计入
+    const plannedElementCount = isEditing
+      ? countNewElements(generatedElements, baseElements)
+      : generatedElements.length
     return [
-      ...validateOutput(json, editorType),
+      ...omitUnchangedBaseElementErrors(validateOutput(json, editorType), generatedElements, baseElements),
       ...validateGenerationPlan(
         session.generationPlan,
-        generatedElements.length,
+        plannedElementCount,
         finalFeatureExecutions,
+        isEditing,
       ).map(message => ({ path: 'generationPlan', message })),
     ]
   }
@@ -1168,7 +1188,7 @@ export async function runAgentLoop(
    * 模型停止调用工具但未显式组装时的兜底：直接用工作区已累积的图元组装。
    * 避免模型“忘记”调 assemble 就整单失败。
    */
-  const finishWithAutoAssemble = (): AgentResult | null => {
+  const finishWithAutoAssemble = async (): Promise<AgentResult | null> => {
     // toolCalls === 0 说明模型什么都没做（如反问澄清），多轮修改时不能把原图当成新结果返回
     if (session.finalJson || toolCalls === 0 || session.workingElements.length === 0) return null
 
@@ -1190,6 +1210,7 @@ export async function runAgentLoop(
     }
 
     session.steps.push({ type: 'done', content: '生成完成（服务端兜底组装）', timestamp: Date.now() })
+    await enrichModelPoints(session.finalJson, context.modelPointApi)
     const metrics = buildMetrics()
     onSSEEvent({ type: 'result', json: session.finalJson })
     onSSEEvent({ type: 'metrics', metrics })
@@ -1208,12 +1229,13 @@ export async function runAgentLoop(
   if (context.currentJson) {
     messages.push({
       role: 'system',
-      content: `这是当前图纸/上一轮生成的 JSON。服务端已将其中图元载入工作区，请基于它增量修改并最终组装完整结果：\n${JSON.stringify(context.currentJson)}`,
+      content: `这是画布上已有的当前${editorType === 'symbol' ? '图符' : '图纸'} JSON。服务端已将其中图元载入工作区，请保留已有内容，仅按用户要求增量新增/修改/删除，并最终组装完整结果：\n${JSON.stringify(context.currentJson)}`,
     })
   }
   messages.push(...history, { role: 'user', content: prompt })
 
   let retries = 0
+  let lastValidationErrors = ''
 
   // === Agent Loop ===
   while (retries <= maxRetries) {
@@ -1295,6 +1317,7 @@ export async function runAgentLoop(
     }
 
     const choice = response.choices?.[0]
+    console.log(`[AgentService] round=${rounds} retries=${retries} finish=${choice?.finish_reason} toolCalls=${choice?.message?.tool_calls?.length ?? 0} contentLen=${choice?.message?.content?.length ?? 0}`)
     if (!choice) {
       return {
         success: false,
@@ -1366,6 +1389,7 @@ export async function runAgentLoop(
             }
             session.steps.push(doneStep)
 
+            await enrichModelPoints(session.finalJson, context.modelPointApi)
             const metrics = buildMetrics()
             onSSEEvent({ type: 'result', json: session.finalJson })
             onSSEEvent({ type: 'metrics', metrics })
@@ -1381,7 +1405,10 @@ export async function runAgentLoop(
 
           // 校验失败 → 进入重试
           retries++
-          const errMsg = `生成的 JSON 校验未通过，以下字段需要修正：\n${formatErrors(errors)}\n请重新调用 assemble 工具并修正。`
+          // 未通过校验的组装结果不能占着结果位，否则后续兜底组装会被跳过
+          session.finalJson = undefined
+          lastValidationErrors = formatErrors(errors)
+          const errMsg = `生成的 JSON 校验未通过，以下字段需要修正：\n${lastValidationErrors}\n请重新调用 assemble 工具并修正。`
           messages.push({ role: 'user', content: errMsg })
 
           onSSEEvent({ type: 'error', content: errMsg, retry: true })
@@ -1421,6 +1448,7 @@ export async function runAgentLoop(
         const errors = validateFinalOutput(json)
         if (errors.length === 0) {
           session.finalJson = json
+          await enrichModelPoints(json, context.modelPointApi)
 
           const metrics = buildMetrics()
           onSSEEvent({ type: 'result', json })
@@ -1448,28 +1476,47 @@ export async function runAgentLoop(
       // 文本中没有 JSON
       messages.push({ role: 'assistant', content })
 
-      const assembledFromText = finishWithAutoAssemble()
+      const assembledFromText = await finishWithAutoAssemble()
       if (assembledFromText) return assembledFromText
+
+      // 已执行过工具却只回了一段文字（如复述计划）：催促继续调用工具，而不是直接判失败
+      if (toolCalls > 0 && retries < maxRetries) {
+        retries++
+        const errMsg = `你只输出了文字，没有调用工具。请不要复述计划，直接调用工具继续完成任务并调用 assemble 工具输出完整结果。${lastValidationErrors ? `\n上一次校验未通过的原因：\n${lastValidationErrors}` : ''}`
+        messages.push({ role: 'user', content: errMsg })
+        onSSEEvent({ type: 'error', content: errMsg, retry: true })
+        session.steps.push({ type: 'retry', content: '模型仅返回文字，已催促继续调用工具', timestamp: Date.now() })
+        continue
+      }
 
       return {
         success: false,
-        error: '模型未生成 JSON，可能需要补充信息',
+        error: lastValidationErrors
+          ? `生成结果校验未通过：\n${lastValidationErrors}`
+          : '模型未生成 JSON，可能需要补充信息',
         steps: session.steps,
         metrics: buildMetrics(),
       }
     }
 
     // === 情况 3: 模型既未调用工具也没有文本 ===
-    const assembledFromEmpty = finishWithAutoAssemble()
+    const assembledFromEmpty = await finishWithAutoAssemble()
     if (assembledFromEmpty) return assembledFromEmpty
 
     retries++
+    // 空回复（常见于推理模型思考耗尽输出额度）：催促其直接行动，否则下一轮仍会原样空转
+    if (toolCalls > 0) {
+      messages.push({
+        role: 'user',
+        content: '你上一轮没有输出任何内容。请减少思考、直接行动：若图元尚未创建完毕，继续调用 create_* / add_feature_* 工具；若已全部完成，立即调用 assemble 工具输出完整结果。',
+      })
+    }
   }
 
   // 超过最大重试次数
   return {
     success: false,
-    error: `超过最大重试次数 (${maxRetries})`,
+    error: `超过最大重试次数 (${maxRetries})${lastValidationErrors ? `，最后一次校验未通过：\n${lastValidationErrors}` : ''}`,
     steps: session.steps,
     metrics: buildMetrics(),
   }
@@ -1530,7 +1577,7 @@ async function callModel(
         model: config.model,
         messages,
         temperature: 0.3,
-        max_tokens: 4096,
+        max_tokens: config.maxTokens || 16384,
         stream: true,
       }
 
@@ -1595,6 +1642,7 @@ async function callModel(
         function: { name: string; arguments: string }
       }>()
       let maxIndex = -1
+      let finishReason = ''
       const flushedIndexes = new Set<number>()
 
       // index 递增说明上一个 tool_call 的分片已经吐完，可以立即派发
@@ -1634,6 +1682,7 @@ async function callModel(
 
           try {
             const chunk = JSON.parse(data)
+            if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason
             const delta = chunk.choices?.[0]?.delta
             if (!delta) continue
 
@@ -1689,7 +1738,7 @@ async function callModel(
         response: {
           choices: [{
             message,
-            finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+            finish_reason: toolCalls.length > 0 ? 'tool_calls' : (finishReason || 'stop'),
           }],
         },
         retryCount: attempt,

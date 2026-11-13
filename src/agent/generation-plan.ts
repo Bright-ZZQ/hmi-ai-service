@@ -65,12 +65,16 @@ export function validateGenerationPlan(
   plan: GenerationPlan | undefined,
   elementCount: number,
   featureExecutions: FeatureExecution[],
+  isEditing = false,
 ): string[] {
   if (!plan) return ['缺少生成计划，请先调用 declare_generation_plan']
 
   const errors: string[] = []
   if (plan.expectedElementCount !== undefined && plan.expectedElementCount !== elementCount) {
-    errors.push(`生成计划要求 ${plan.expectedElementCount} 个基础图元，实际为 ${elementCount} 个`)
+    const scope = isEditing ? '本轮新增' : ''
+    errors.push(`生成计划要求${scope} ${plan.expectedElementCount} 个基础图元，实际${scope}为 ${elementCount} 个。`
+      + '若计划数量有误（如用户并未限定数量，或需求就是新增图元），请先重新调用 declare_generation_plan 修正（不限定数量时省略 expectedElementCount）；'
+      + '若实际图元多余或缺失，请用 delete_element / create_* 调整后再组装')
   }
 
   if (!canMatchFeatureExecutions(

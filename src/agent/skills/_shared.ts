@@ -117,7 +117,7 @@ export function createGenerationPlanSkill(group: EditorType): SkillRegistryEntry
           type: 'object',
           properties: {
             summary: { type: 'string', description: '对用户需求的简短复述' },
-            expectedElementCount: { type: 'number', description: '最终 elements/comps 扁平数组的准确数量；仅当用户明确要求图元数量或基于当前 JSON 可准确计算时填写，否则省略' },
+            expectedElementCount: { type: 'number', description: '新建时为最终 elements/comps 扁平数组的准确数量；基于当前 JSON 编辑时为本轮新增的图元数量（不含已有图元）。仅当用户明确要求图元数量时填写，否则必须省略（不要用 0 表示“不新增”）' },
             requiredFeatureTools: {
               type: 'array',
               items: { type: 'string' },
