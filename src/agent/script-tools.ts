@@ -28,7 +28,7 @@ export const PIPE_SCRIPT_API_REFERENCE = `管道脚本签名为 function(data, g
 data：setScriptEnabled(bool)/getScriptEnabled()；setStore(key,value)/getStore(key) 读写管道配置，常用 key：flowEnabled(虚线流动 bool)、flowReverse(虚线反向 bool)、flowRate(虚线流速 number)、flowGroupEnabled(流动组 bool)、flowGroupReverse(流动组反向 bool)、flowGroupRate(流动组流速 number)、flowGroupColor(流动组颜色 "#rrggbb")、flowGroupType("background"|"image"|"particle")、bgStroke/fgStroke(背景层/前景层颜色)；可赋值 data.onScriptDestroy = function(){...} 在管道销毁时清理定时器。
 ${GV_API_REFERENCE}
 ${UTILS_API_REFERENCE}
-读取测点成功回调的返回值结构不固定，必须做防御处理（判空、Number() 转换）；定时读取用 setInterval，并在 data.onScriptDestroy 中 clearInterval。`
+定时读取测点用 setInterval，并在 data.onScriptDestroy 中 clearInterval。`
 
 /** 图符属性绑定函数 API 参考 */
 export const SYMBOL_FUNC_API_REFERENCE = `属性绑定函数签名为 function(data)，函数体必须 return 要赋给该属性的值（类型与属性一致：颜色用 "#rrggbb" 字符串，数值属性返回 number，rotation 为角度，文本返回字符串）。${SCRIPT_RULES}

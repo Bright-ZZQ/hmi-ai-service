@@ -59,7 +59,13 @@ export const NODE_API_REFERENCE = `data：setVisibleEx(bool)/getVisibleEx() 显�
 export const GV_API_REFERENCE = `gv：findNodeByIdEx(id) 查找图元；setZoomEx({x,y})/getZoomEx()；setPageParamsEx(name,value)/getPageParamsEx(name)；setLayerVisibleByIndexEx(index,visible)/getLayerVisibleByIndexEx(index)；setLayerVisibleByNameEx(name,visible)/getLayerVisibleByNameEx(name)。`
 
 /** 通用函数（hmi.utils）参考 */
-export const UTILS_API_REFERENCE = `通用：hmi.utils.readModelPoint({projectCode,points}, success, error)；hmi.utils.writeModelPoint({projectCode,nodes:[{point,value}],gv}, success, error)；hmi.utils.getProjectCode(gv)；hmi.utils.openDialog(url,{positionType,width,height},closeOthers)；hmi.utils.openPage(url)。`
+export const UTILS_API_REFERENCE = `通用：
+- hmi.utils.getProjectCode(gv)：返回当前工程编码，读写测点时作为 projectCode 传入。
+- hmi.utils.readModelPoint({projectCode, points:["测点全路径",...]}, success, error)：批量读取测点。success(res) 的 res 是以测点全路径为 key、测点当前值为 value 的对象，如 { "101:XAS_001.AV": 100, "101:XAS_002.AV": 200 }，用 res["101:XAS_001.AV"] 取值（测点名含冒号、点号，必须用方括号取值）；取值后判空并用 Number() 转换再计算；error(err) 为失败回调。
+  示例：hmi.utils.readModelPoint({ projectCode: hmi.utils.getProjectCode(gv), points: ["101:XAS_001.AV", "101:XAS_002.AV"] }, (res) => { const v = Number(res["101:XAS_001.AV"]); if (!isNaN(v)) { /* 使用 v */ } }, (err) => { })
+- hmi.utils.writeModelPoint({projectCode, nodes:[{point:"测点全路径", value:值},...], gv}, success, error)：批量写入测点，gv 必须传入。success(res) 的 res 是与 nodes 顺序一一对应的布尔数组，如 [false, false]，res[i] 对应 nodes[i] 的写入结果（true 写入成功；false 表示写入失败，或写入值与测点当前值相同而未发生变化，所以 false 不一定是出错，不要仅凭 false 判定失败或重复重试写入）；error(err) 为请求失败回调，请求本身失败应在此处理。
+  示例：hmi.utils.writeModelPoint({ projectCode: hmi.utils.getProjectCode(gv), nodes: [{ point: "101:XAS_001.AV", value: 100 }, { point: "101:XAS_002.AV", value: 200 }], gv: gv }, (res) => { /* res[i] 为 true 表示 nodes[i] 写入并生效 */ }, (err) => { })
+- hmi.utils.openDialog(url,{positionType,width,height},closeOthers)；hmi.utils.openPage(url)。`
 
 /** 脚本可用函数参考（精简自编辑器函数库），嵌入工具描述供模型编写脚本 */
 export const SCRIPT_API_REFERENCE = `脚本是函数体，只写函数体，不要 function 声明与外层花括号。签名随触发方式不同：
