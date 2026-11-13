@@ -78,7 +78,7 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
       },
     )
 
-    if (!result.success) {
+    if (!result.success && !result.question) {
       sendSSE({
         type: 'error',
         content: result.error || '生成失败',

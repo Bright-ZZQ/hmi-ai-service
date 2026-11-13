@@ -83,6 +83,8 @@ export interface AgentResult {
   success: boolean
   json?: Record<string, unknown>
   error?: string
+  /** 目标不明确，需要用户补充信息后再继续 */
+  question?: AgentQuestion
   steps: AgentStep[]
   metrics?: StreamMetrics
 }
@@ -156,10 +158,18 @@ export type SSEEventType =
   | 'element_patch'
   | 'stream_reset'
   | 'metrics'
+  | 'question'
+
+/** Agent 需要用户澄清时的提问 */
+export interface AgentQuestion {
+  question: string
+  options?: string[]
+}
 
 export interface SSEEvent {
   type: SSEEventType
   content?: string
+  question?: AgentQuestion
   toolName?: string
   toolArgs?: Record<string, unknown>
   json?: Record<string, unknown>

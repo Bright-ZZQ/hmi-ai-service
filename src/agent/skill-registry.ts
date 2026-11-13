@@ -39,7 +39,12 @@ import {
   ADD_FEATURE_ROTATE,
   ADD_FEATURE_VISIBLE,
   ADD_FEATURE_WRITE_VALUE,
-  ADD_FEATURE_NUM_DISPLAY
+  ADD_FEATURE_NUM_DISPLAY,
+  ADD_EVENT_DEFINITION,
+  ASK_USER,
+  FIND_DISPLAY_ELEMENTS,
+  SET_DISPLAY_SCRIPT,
+  SET_PIPE_SCRIPT,
 } from './skills/display/features'
 import {
   ASSEMBLE_DISPLAY,
@@ -67,6 +72,7 @@ import {
   ADD_FEATURE_ROTATE_SYMBOL,
   ADD_FEATURE_VISIBLE_SYMBOL,
   ADD_FEATURE_WRITE_VALUE_SYMBOL,
+  SET_SYMBOL_ATTR_FUNCTION,
 } from './skills/symbol/features'
 import {
   ASSEMBLE_SYMBOL,
@@ -118,6 +124,15 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   ADD_FEATURE_OPEN_PAGE,
   ADD_FEATURE_ROTATE,
   ADD_FEATURE_NUM_DISPLAY,
+  ADD_EVENT_DEFINITION,
+
+  // Display 图纸组 — 图纸脚本 / 管道脚本
+  SET_DISPLAY_SCRIPT,
+  SET_PIPE_SCRIPT,
+
+  // Display 图纸组 — 图元定位 / 向用户提问
+  FIND_DISPLAY_ELEMENTS,
+  ASK_USER,
 
   DECLARE_SYMBOL_GENERATION_PLAN,
 
@@ -141,6 +156,7 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   ADD_FEATURE_VISIBLE_SYMBOL,
   ADD_FEATURE_WRITE_VALUE_SYMBOL,
   ADD_FEATURE_OPEN_PAGE_SYMBOL,
+  SET_SYMBOL_ATTR_FUNCTION,
 
   // Symbol 图符组 — 已有图元编辑
   UPDATE_SYMBOL_ELEMENT,
@@ -199,6 +215,11 @@ const SKILL_META: Record<string, SkillMeta> = {
   add_feature_open_page: { category: 'feature', phases: FEATURE_PHASES, keywords: ['打开画面', '跳转', '弹窗', '链接'] },
   add_feature_rotate: { category: 'feature', phases: FEATURE_PHASES, keywords: ['旋转', '转动', '自转'] },
   add_feature_num_display: { category: 'feature', phases: FEATURE_PHASES, keywords: ['数值显示', '实时值', '显示数值', '测点值', '单位', '小数位', '格式化'] },
+  add_event_definition: { category: 'feature', phases: FEATURE_PHASES, keywords: ['脚本', '事件定义', '事件响应', '点击', '单击', '双击', '鼠标移入', '鼠标离开', '悬停', '定时', '每隔', '周期', '每天', '每周', '每月', '画面打开', '打开前', '打开后', '值变化', '数值变化', '条件执行', '弹窗', '弹出'] },
+  set_display_script: { category: 'feature', phases: FEATURE_PHASES, keywords: ['图纸脚本', '画面脚本', '页面脚本', '初始化脚本', '加载脚本', '画面初始化', '页面初始化'] },
+  set_pipe_script: { category: 'feature', phases: FEATURE_PHASES, keywords: ['管道脚本', '管道流动', '流动组', '管道流向', '管道反向', '管道速度'] },
+  find_elements: { category: 'edit', phases: ['edit'] },
+  ask_user: { category: 'edit', phases: ['edit'] },
 
   // Symbol — 基础图元
   create_symbol_rect: { category: 'shape', phases: ['create'], keywords: ['矩形', '方块'] },
@@ -210,10 +231,11 @@ const SKILL_META: Record<string, SkillMeta> = {
   create_symbol_arc: { category: 'shape', phases: ['create'], keywords: ['弧', '圆弧'] },
   create_symbol_chord: { category: 'shape', phases: ['create'], keywords: ['弦', '弓形'] },
   create_symbol_pie: { category: 'shape', phases: ['create'], keywords: ['饼图', '扇形'] },
+  set_symbol_attr_function: { category: 'feature', phases: FEATURE_PHASES, keywords: ['脚本', '函数', '函数绑定', '属性绑定', '数据绑定', '绑定函数', '阈值', '超过', '高于', '低于', '根据数值'] },
 }
 
 /** 工具命名规范：治理约束，新增工具必须遵循 */
-const TOOL_NAME_PATTERN = /^(create_(display|symbol)_[a-z_]+|create_metric_panel|create_equipment|create_chart_panel|add_feature_[a-z_]+|assemble_(display|symbol)|update_element|delete_element|declare_generation_plan)$/
+const TOOL_NAME_PATTERN = /^(create_(display|symbol)_[a-z_]+|create_metric_panel|create_equipment|create_chart_panel|add_feature_[a-z_]+|add_event_definition|set_display_script|set_pipe_script|set_symbol_attr_function|find_elements|ask_user|assemble_(display|symbol)|update_element|delete_element|declare_generation_plan)$/
 
 /** 动态意图关键词：由全部特性关键词 + 通用动效词汇聚合，用于按需下发时判定是否需要特性工具 */
 const DYNAMIC_INTENT_KEYWORDS = [

@@ -8,6 +8,148 @@
 
 import type { SkillRegistryEntry } from '../../../types'
 import { FEATURE_CONDITION_PROPS } from '../_shared'
+import { ACTION_KINDS, DISPLAY_TRIGGERS, MOUSE_EVENT_TYPES, SCHEDULE_TYPES, SCRIPT_API_REFERENCE } from '../../event-definition'
+import { PAGE_SCRIPT_API_REFERENCE, PIPE_SCRIPT_API_REFERENCE } from '../../script-tools'
+
+export const FIND_DISPLAY_ELEMENTS: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'find_elements',
+      description: `在当前图纸中按名称或文字图元的文字内容（服务端已解码 base64）查找候选图元，返回 id、name、type、text、坐标尺寸及相对画布的大致位置（如“右上”）。
+用户用自然语言指代图元（如“名为XX的按钮”“文字为‘启动’的图元”）时先调用此工具，再用返回的 id 作为 elementName 调用后续工具。keyword 为空则列出全部图元。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: { type: 'string', description: '名称或文字内容关键词，可为空' },
+        },
+        required: [],
+      },
+    },
+  },
+}
+
+export const ASK_USER: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'ask_user',
+      description: `无法确定用户所指图元（find_elements 返回 0 个或多个候选）时，向用户提问并结束本轮，等待用户回答后再继续。
+不要猜测目标图元。问题应简短、可直接回答，可基于候选的位置/相邻关系提问，例如“该图元是否在图纸右上方？”“该图元是否在‘XX’图元旁边？”，也可列出候选让用户选择。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: '向用户提出的问题' },
+          options: { type: 'array', items: { type: 'string' }, description: '可选的快捷回答（如“是”“否”或候选图元描述），可省略' },
+        },
+        required: ['question'],
+      },
+    },
+  },
+}
+
+export const ADD_EVENT_DEFINITION: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_event_definition',
+      description: `添加“事件定义”（属性栏 - 控制 - 事件定义），支持图元级与图纸级，一个事件对应一个动作。
+- scope=element：图元鼠标事件（eventType），写入该图元 store.events，需 elementName（来自 find_elements 的 id）。
+- scope=display：图纸级事件，写入 pageProperty.events，用 trigger 指定触发方式：
+  respond=事件响应(需 handleId)；schedule=定时执行(scheduleType+time/intervalSeconds/dayOfWeek/dayOfMonth)；valueChanged=数值变化(dataSourceKeys 测点全路径，如 "100:XAM_001.AV")；onOpenBefore=画面打开前(仅 script)；onOpenAfter=画面打开后。
+- action 动作：script 脚本(script)；visible 显隐(visible: 0隐藏/1显示/2切换)；move 移动(moveType moveBy|moveTo, x, y)；rotate 旋转(angle, clockwise)；scale 缩放(scaleX, scaleY)；size 尺寸(width, height)；color 变色(textColor/borderColor/backgroundColor 至少一个)；openDialog 弹窗(url,width,height,dialogPosition)；openWindow 新窗口(url)。
+- 除 script/openDialog/openWindow 外，动作作用于 targetElements 指定的图元 id 列表；图元级缺省作用于自身，图纸级必须指定。
+- 图元级 eventScope=other + handleId：向其他图纸/图纸级“事件响应”广播事件，此时无需 action。
+用户不会提供图元 ID：用 find_elements 定位，不确定则 ask_user，不得猜测。成功后调用 assemble_display 输出完整图纸。
+${SCRIPT_API_REFERENCE}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          scope: { type: 'string', enum: ['element', 'display'], description: 'element=图元事件，display=图纸事件，默认 element' },
+          title: { type: 'string', description: '事件名称，不超过 12 字，如“点击随机变色”' },
+          elementName: { type: 'string', description: 'scope=element 时的所属图元 id（来自 find_elements）' },
+          eventType: { type: 'string', enum: [...MOUSE_EVENT_TYPES], description: 'scope=element 的鼠标事件：onClick=单击，onDoubleClick=双击，onEnter=移入，onLeave=离开，onHover=悬停，onDown=按下，onUp=抬起，默认 onClick' },
+          eventScope: { type: 'string', enum: ['current', 'other'], description: '图元事件：current=在当前图纸执行动作（默认）；other=向其他图纸发送事件' },
+          trigger: { type: 'string', enum: [...DISPLAY_TRIGGERS], description: 'scope=display 的触发方式' },
+          handleId: { type: 'string', description: '事件标识：respond 事件响应、eventScope=other 发送事件时必填，两端需一致' },
+          scheduleType: { type: 'string', enum: [...SCHEDULE_TYPES], description: 'trigger=schedule：interval=每隔 N 秒，daily=每天，weekly=每周，monthly=每月' },
+          intervalSeconds: { type: 'number', description: 'scheduleType=interval 的间隔秒数' },
+          time: { type: 'string', description: 'daily/weekly/monthly 的执行时刻 HH:mm 或 HH:mm:ss' },
+          dayOfWeek: { type: 'number', description: 'weekly：1-7，1=周一，7=周日' },
+          dayOfMonth: { type: 'number', description: 'monthly：1-31' },
+          dataSourceKeys: { type: 'array', items: { type: 'string' }, description: 'trigger=valueChanged 监听的测点全路径列表' },
+          action: { type: 'string', enum: [...ACTION_KINDS], description: '动作类型，默认 script' },
+          targetElements: { type: 'array', items: { type: 'string' }, description: '动作作用的图元 id 列表（来自 find_elements）；"node-self" 表示触发事件的图元自身' },
+          script: { type: 'string', description: 'action=script 的脚本函数体' },
+          visible: { type: 'number', enum: [0, 1, 2], description: 'action=visible：0隐藏，1显示，2切换' },
+          moveType: { type: 'string', enum: ['moveBy', 'moveTo'], description: 'action=move' },
+          x: { type: 'number', description: 'action=move 的 x' },
+          y: { type: 'number', description: 'action=move 的 y' },
+          angle: { type: 'number', description: 'action=rotate 的角度' },
+          clockwise: { type: 'boolean', description: 'action=rotate 是否顺时针，默认 true' },
+          scaleX: { type: 'number', description: 'action=scale' },
+          scaleY: { type: 'number', description: 'action=scale' },
+          width: { type: 'number', description: 'action=size / openDialog 的宽' },
+          height: { type: 'number', description: 'action=size / openDialog 的高' },
+          textColor: { type: 'string', description: 'action=color 文本色，如 #ff0000' },
+          borderColor: { type: 'string', description: 'action=color 边框色' },
+          backgroundColor: { type: 'string', description: 'action=color 背景色' },
+          url: { type: 'string', description: 'action=openDialog/openWindow 的地址' },
+          dialogPosition: { type: 'string', enum: ['center', 'left-top', 'right-top', 'left-bottom', 'right-bottom'], description: 'action=openDialog 弹窗位置，默认 center' },
+          params: { type: 'string', description: 'eventScope=other 时随事件发送的参数 JSON 字符串，默认 {}' },
+        },
+        required: ['scope'],
+      },
+    },
+  },
+}
+
+export const SET_DISPLAY_SCRIPT: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'set_display_script',
+      description: `设置图纸脚本（属性栏 - 图纸 - 脚本），写入 pageProperty.scriptFunc，画面加载完成后执行一次，用于画面初始化（如设置初始显隐/颜色/文本、读取页面参数、定时刷新）。
+这是对当前图纸的修改，不得新建图元；不需要 elementName。设置后调用 assemble_display 输出完整图纸。
+需要由用户操作、定时或数值变化触发的逻辑应使用 add_event_definition，而不是本工具。
+${PAGE_SCRIPT_API_REFERENCE}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          script: { type: 'string', description: '图纸脚本函数体' },
+          mode: { type: 'string', enum: ['append', 'replace'], description: 'append=追加到已有脚本之后（默认，保留原脚本）；replace=完全替换已有脚本，仅在用户明确要求修改/替换原脚本时使用' },
+        },
+        required: ['script'],
+      },
+    },
+  },
+}
+
+export const SET_PIPE_SCRIPT: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'set_pipe_script',
+      description: `为管道图元（create_display_pipe 创建）设置管道脚本，写入 store.pipeScript，管道加入画布时执行，用于按条件控制管道流动动画（流动组开关、方向、速度、颜色）。
+elementName 必须是管道图元（来自 create_display_pipe 返回或 find_elements 的 id）。管道含脚本后流动组默认关闭，脚本必须调用 data.setScriptEnabled(true) 才会流动。
+${PIPE_SCRIPT_API_REFERENCE}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '管道图元的 id、name 或 node_id' },
+          script: { type: 'string', description: '管道脚本函数体' },
+          enableFlowGroup: { type: 'boolean', description: '是否同时开启该管道的流动组显示（store.flowGroupEnabled=true），默认 true；脚本自行用 setStore 控制时可传 false' },
+        },
+        required: ['elementName', 'script'],
+      },
+    },
+  },
+}
 
 export const ADD_FEATURE_VISIBLE: SkillRegistryEntry = {
   group: 'display',

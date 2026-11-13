@@ -18,6 +18,25 @@ import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSy
 import type { MetricPanelParams, EquipmentParams, ChartPanelParams } from './element-builders'
 import { buildDynamicFeature, buildInteractiveFeature, isDynamicFeatureTool, isInteractiveFeatureTool } from './dynamic-feature-builders'
 import { buildGenerationPlan, validateGenerationPlan } from './generation-plan'
+import {
+  ACTION_KINDS,
+  DISPLAY_TRIGGERS,
+  MOUSE_EVENT_TYPES,
+  NODE_SELF,
+  buildEventDefinition,
+} from './event-definition'
+import type { ActionKind, DisplayTrigger, MouseEventType } from './event-definition'
+import {
+  PAGE_SCRIPT_PARAMS,
+  PIPE_SCRIPT_PARAMS,
+  SYMBOL_FUNC_PARAMS,
+  extractReadBindings,
+  mergeDataBindings,
+  mergePageScript,
+  parseDataBindings,
+  prepareScript,
+} from './script-tools'
+import { findElementBriefs } from './element-lookup'
 import type { FeatureExecution, GenerationPlan } from './generation-plan'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
@@ -31,6 +50,7 @@ import type {
   StreamCanvas,
   StreamMetrics,
   AgentContext,
+  AgentQuestion,
 } from '../types'
 
 // ============================================================
@@ -53,6 +73,18 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 - 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`，数值显示 → \`add_feature_num_display\`，显隐 → \`add_feature_visible\`。
 - 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`。
+- 事件定义（属性栏 - 控制 - 事件定义）统一用 \`add_event_definition\`，这是对**当前图纸**的修改，不得新建图元：
+  - scope=element：图元鼠标事件（单击/双击/移入/离开/悬停/按下/抬起），动作可为脚本、显隐、移动、旋转、缩放、尺寸、变色、弹窗、打开窗口，或向其他图纸发送事件(eventScope=other + handleId)。
+  - scope=display：图纸级事件。trigger=respond 事件响应（需 handleId，由图元事件/其他事件广播触发）；schedule 定时执行（间隔/每天/每周/每月）；valueChanged 数值变化（需测点全路径）；onOpenBefore 画面打开前（仅脚本）；onOpenAfter 画面打开后。
+  - 一个事件只有一个动作；需要多个动作就多次调用。动作要作用于其他图元时，用 targetElements 传目标图元 id。
+- 用户不会给图元 ID，而是描述图元名称或文字图元的文字内容（图纸中文字为 base64，\`find_elements\` 已解码）。需要定位图元（事件所属图元、动作目标图元）时先调用 \`find_elements\`；恰好 1 个候选才可继续；0 个或多个候选时必须调用 \`ask_user\` 提问（如“该图元是否在图纸右上方？”“该图元是否在某某图元旁边？”或列出候选让用户选），禁止猜测。用户回答后再次定位。
+- 添加事件定义后，必须调用 assemble_display 返回完整图纸，其他内容保持不变。
+- 脚本类特性（均不新建图元，设置后必须调用 assemble 工具输出完整结果）：
+  - 图纸初始化脚本（画面加载后执行一次）→ \`set_display_script\`；默认追加到原脚本之后，仅用户明确要求替换时才 mode=replace。
+  - 管道流动控制脚本 → \`set_pipe_script\`，目标必须是管道图元；脚本必须调用 data.setScriptEnabled(true) 流动组才会显示。
+  - 图符（symbol）属性由数据绑定值计算（如“温度超过 80 变红”）→ \`set_symbol_attr_function\`，脚本 return 属性值，读取的绑定名必须在 dataBindings 中声明。
+  - 由用户操作、定时或数值变化触发的动作用 \`add_event_definition\`，不要用上述工具。
+  - 脚本只写函数体，只使用工具描述中列出的 API，严禁 import/require/eval/fetch/document/window。
 - 必须先创建目标图元，再调用特性工具；\`elementName\` 使用创建工具返回的 name、id 或 node_id。
 - “分别配置”表示每种特性必须绑定到不同图元，不得把所有特性堆在同一个图元上。
 - 禁止自行为特性添加任何触发条件。只有用户原始请求明确指定“当/如果某测点满足某条件时”，才设置 \`conditionSpecifiedByUser=true\` 并传入 \`dataSourceKey\`、\`conditionOperator\`、\`conditionValue\`。
@@ -155,7 +187,7 @@ function getSystemPrompt(editorType: EditorType): string {
 // 会话状态
 // ============================================================
 
-interface SessionState {
+export interface SessionState {
   editorType: EditorType
   workingElements: Record<string, unknown>[]
   steps: AgentStep[]
@@ -163,6 +195,14 @@ interface SessionState {
   currentJson?: Record<string, unknown>
   generationPlan?: GenerationPlan
   featureExecutions: FeatureExecution[]
+  /** 本轮新增的图纸级事件定义，assemble_display 时并入 pageProperty.events */
+  displayEvents: Record<string, unknown>[]
+  /** 本轮设置的图纸脚本，assemble_display 时写入 pageProperty.scriptFunc */
+  displayScript?: { script: string, replace: boolean }
+  /** 本轮新增的图符数据绑定声明，assemble_symbol 时并入 dataBindings */
+  symbolDataBindings: Record<string, unknown>[]
+  /** 目标不明确时向用户的提问，设置后本轮结束 */
+  question?: AgentQuestion
   /** 流式绘制用的画布信息；最终以 assemble 结果为准 */
   canvas: StreamCanvas
 }
@@ -216,13 +256,15 @@ function getElementsFromJson(
   return structuredClone(items) as Record<string, unknown>[]
 }
 
-function createSession(editorType: EditorType, currentJson?: Record<string, unknown>): SessionState {
+export function createSession(editorType: EditorType, currentJson?: Record<string, unknown>): SessionState {
   return {
     editorType,
     workingElements: getElementsFromJson(editorType, currentJson),
     steps: [],
     currentJson,
     featureExecutions: [],
+    displayEvents: [],
+    symbolDataBindings: [],
     canvas: getCanvasFromJson(editorType, currentJson),
   }
 }
@@ -566,6 +608,23 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
     desc: (args.desc as string | undefined) ?? (baseDocument?.desc as string | undefined),
   })
 
+  const generatedDocument = document.document as Record<string, unknown>
+  const generatedPageProperty = generatedDocument.pageProperty as Record<string, unknown>
+  // 保留原图纸 pageProperty 中的其他配置（如已有 events、scriptFunc），仅以生成值覆盖尺寸/背景等
+  const pageProperty: Record<string, unknown> = { ...basePageProperty, ...generatedPageProperty }
+  if (session.displayEvents.length > 0) {
+    const baseEvents = Array.isArray(basePageProperty?.events) ? basePageProperty.events : []
+    pageProperty.events = [...baseEvents, ...session.displayEvents]
+  }
+  if (session.displayScript) {
+    pageProperty.scriptFunc = mergePageScript(
+      basePageProperty?.scriptFunc,
+      session.displayScript.script,
+      session.displayScript.replace,
+    )
+  }
+  generatedDocument.pageProperty = pageProperty
+
   if (baseDocument) {
     const generated = document.document as Record<string, unknown>
     document.document = {
@@ -616,7 +675,7 @@ function handleAssembleSymbol({ name, args, session, onStep, emit }: ToolExecCon
     height: (args.height as number | undefined) ?? (baseSymbol?.height as number | undefined),
     background: (args.background as string | undefined) ?? (baseSymbol?.background as string | undefined),
   })
-  const symbol = baseSymbol ? {
+  const symbol: Record<string, unknown> = baseSymbol ? {
     ...baseSymbol,
     ...builtSymbol,
     code: baseSymbol.code ?? builtSymbol.code,
@@ -628,6 +687,9 @@ function handleAssembleSymbol({ name, args, session, onStep, emit }: ToolExecCon
     comps: effectiveComps,
   } : builtSymbol
 
+  if (session.symbolDataBindings.length > 0) {
+    symbol.dataBindings = mergeDataBindings(symbol.dataBindings, session.symbolDataBindings)
+  }
   session.finalJson = symbol
   session.canvas = getCanvasFromJson('symbol', symbol)
   emit({ type: 'canvas', canvas: session.canvas })
@@ -736,6 +798,239 @@ function handleInteractiveFeature(ctx: ToolExecContext): string {
   return finishFeatureAttach(ctx, target, element, feature.type, '交互')
 }
 
+// 按名称/文字内容检索图元
+function handleFindElements({ args, session }: ToolExecContext): string {
+  const keyword = typeof args.keyword === 'string' ? args.keyword : ''
+  const { total, candidates } = findElementBriefs(
+    session.workingElements,
+    keyword,
+    session.canvas.pageWidth,
+    session.canvas.pageHeight,
+  )
+  return JSON.stringify({
+    success: true,
+    canvas: { width: session.canvas.pageWidth, height: session.canvas.pageHeight },
+    total,
+    candidates,
+  })
+}
+
+// 目标不明确时向用户提问并结束本轮
+function handleAskUser({ name, args, session, onStep, emit }: ToolExecContext): string {
+  const question = typeof args.question === 'string' ? args.question.trim() : ''
+  if (!question) return JSON.stringify({ success: false, error: '缺少 question 参数' })
+  const options = Array.isArray(args.options)
+    ? args.options.filter((o): o is string => typeof o === 'string' && o.length > 0).slice(0, 6)
+    : undefined
+  session.question = { question, ...(options?.length ? { options } : {}) }
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: question,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  emit({ type: 'question', question: session.question })
+  return JSON.stringify({ success: true, message: '已向用户提问，请停止并等待用户回答' })
+}
+
+const DISPLAY_EVENT_KEY = '__display_event__'
+
+function getElementNodeId(element: Record<string, unknown>): string {
+  const store = isPlainObject(element.store) ? element.store : {}
+  const id = element.id ?? store.node_id
+  return typeof id === 'string' || typeof id === 'number' ? String(id) : getElementAliases(element)[0] ?? ''
+}
+
+function pickEnum<T extends string>(value: unknown, list: readonly T[], fallback: T): T {
+  return list.includes(value as T) ? (value as T) : fallback
+}
+
+// 事件定义：图元级写入 store.events，图纸级并入 pageProperty.events
+function handleAddEventDefinition(ctx: ToolExecContext): string {
+  const { name, args, session, onStep } = ctx
+  const isDisplay = args.scope === 'display'
+  const title = typeof args.title === 'string' ? args.title.trim().slice(0, 30) : ''
+  const action = pickEnum<ActionKind>(args.action, ACTION_KINDS, 'script')
+
+  // 动作目标图元：targetElements 逐个解析为图元 id
+  const nodeIds: string[] = []
+  const targets = Array.isArray(args.targetElements) ? args.targetElements : []
+  for (const raw of targets) {
+    const key = String(raw)
+    if (key === NODE_SELF) {
+      nodeIds.push(NODE_SELF)
+      continue
+    }
+    const index = findElementIndex(session.workingElements, key)
+    if (index < 0) {
+      return JSON.stringify({ success: false, error: `未找到动作目标图元: ${key}，请先用 find_elements 确定` })
+    }
+    nodeIds.push(getElementNodeId(session.workingElements[index]))
+  }
+
+  let owner: { target: string, element: Record<string, unknown> } | undefined
+  if (!isDisplay) {
+    const resolved = resolveFeatureTarget(session, args)
+    if ('error' in resolved) return JSON.stringify({ success: false, error: resolved.error })
+    owner = resolved
+    // 图元事件缺省对自身执行动作（脚本除外，脚本可自行查找图元）
+    if (nodeIds.length === 0 && action !== 'script') nodeIds.push(NODE_SELF)
+  }
+
+  const event = buildEventDefinition({
+    target: isDisplay ? 'display' : 'element',
+    title,
+    nodeIds,
+    mouseEvent: pickEnum<MouseEventType>(args.eventType, MOUSE_EVENT_TYPES, 'onClick'),
+    eventScope: args.eventScope === 'other' ? 'other' : 'current',
+    trigger: pickEnum<DisplayTrigger>(args.trigger, DISPLAY_TRIGGERS, 'respond'),
+    handleId: typeof args.handleId === 'string' ? args.handleId.trim() : '',
+    schedule: args,
+    dataSourceKeys: Array.isArray(args.dataSourceKeys) ? args.dataSourceKeys.map(String) : [],
+    action,
+    args,
+  })
+  if ('error' in event) {
+    return JSON.stringify({ success: false, error: `${event.error}，请修正后重新调用` })
+  }
+
+  if (!isDisplay && owner) {
+    const { target, element } = owner
+    const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
+    const events = Array.isArray(elementStore.events) ? [...elementStore.events] : []
+    events.push(event)
+    element.store = { ...elementStore, events }
+    return finishFeatureAttach(ctx, target, element, `${String(event.type ?? '')} 事件(${action})`, '交互')
+  }
+
+  session.displayEvents.push(event)
+  session.featureExecutions.push({
+    toolName: name,
+    elementKey: `${DISPLAY_EVENT_KEY}${session.displayEvents.length}`,
+  })
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: `已添加图纸事件 "${title || event.name}"（${String(args.trigger ?? 'respond')} / ${action}）`,
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  return JSON.stringify({ success: true, event })
+}
+
+// 图纸脚本：写入 pageProperty.scriptFunc（assemble_display 时合并）
+function handleSetDisplayScript(ctx: ToolExecContext): string {
+  const { name, args, session, onStep } = ctx
+  const prepared = prepareScript(args.script, PAGE_SCRIPT_PARAMS)
+  if ('error' in prepared) {
+    return JSON.stringify({ success: false, error: `${prepared.error}，请修正后重新调用` })
+  }
+  const replace = args.mode === 'replace'
+  const previous = session.displayScript
+  session.displayScript = {
+    script: previous && !replace ? mergePageScript(previous.script, prepared.script, false) : prepared.script,
+    replace: replace || previous?.replace === true,
+  }
+  session.featureExecutions.push({
+    toolName: name,
+    elementKey: `${DISPLAY_EVENT_KEY}script${session.featureExecutions.length}`,
+  })
+  const step: AgentStep = {
+    type: 'tool_call',
+    content: replace ? '已替换图纸脚本' : '已添加图纸脚本',
+    toolName: name,
+    toolArgs: args,
+    timestamp: Date.now(),
+  }
+  session.steps.push(step)
+  onStep(step)
+  return JSON.stringify({ success: true, message: '图纸脚本已设置，请调用 assemble_display 输出完整图纸' })
+}
+
+// 管道脚本：写入管道图元 store.pipeScript
+function handleSetPipeScript(ctx: ToolExecContext): string {
+  const { args, session } = ctx
+  const resolved = resolveFeatureTarget(session, args)
+  if ('error' in resolved) return JSON.stringify({ success: false, error: resolved.error })
+  const { target, element } = resolved
+  if (element.type !== 'Pipeline') {
+    return JSON.stringify({ success: false, error: `图元 ${target} 不是管道（当前类型 ${String(element.type)}），管道脚本只能用于 create_display_pipe 创建的管道` })
+  }
+  const prepared = prepareScript(args.script, PIPE_SCRIPT_PARAMS)
+  if ('error' in prepared) {
+    return JSON.stringify({ success: false, error: `${prepared.error}，请修正后重新调用` })
+  }
+  const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
+  elementStore.pipeScript = prepared.script
+  if (args.enableFlowGroup !== false) elementStore.flowGroupEnabled = true
+  element.store = elementStore
+  return finishFeatureAttach(ctx, target, element, '管道脚本', '动态')
+}
+
+/** 图符 store 中承载结构化数据、不能由函数计算的键 */
+const SYMBOL_NON_BINDABLE_STORE_KEYS = new Set([
+  'shape', 'node_id', '_originInfo', 'events', 'dynamicDyna', 'interactiveDyna',
+])
+
+// 图符属性绑定函数：attrs/store 中的 { func, value }
+function handleSetSymbolAttrFunction(ctx: ToolExecContext): string {
+  const { args, session } = ctx
+  const resolved = resolveFeatureTarget(session, args)
+  if ('error' in resolved) return JSON.stringify({ success: false, error: resolved.error })
+  const { target, element } = resolved
+  const fail = (error: string) => JSON.stringify({ success: false, error })
+
+  const attr = typeof args.attr === 'string' ? args.attr.trim() : ''
+  if (!attr) return fail('缺少 attr 参数')
+
+  const prepared = prepareScript(args.script, SYMBOL_FUNC_PARAMS)
+  if ('error' in prepared) return fail(`${prepared.error}，请修正后重新调用`)
+  if (!/\breturn\b/.test(prepared.script)) return fail('属性绑定函数必须 return 属性值，请修正后重新调用')
+  if (/^(attr|relatedProps)@/.test(prepared.script)) return fail('script 必须是函数体，不能以 attr@ / relatedProps@ 开头')
+
+  const bindings = parseDataBindings(args.dataBindings)
+  if ('error' in bindings) return fail(bindings.error)
+  const declared = new Set<string>()
+  const baseBindings = session.currentJson?.dataBindings
+  for (const item of [...(Array.isArray(baseBindings) ? baseBindings : []), ...session.symbolDataBindings, ...bindings]) {
+    if (isPlainObject(item) && typeof item.attr === 'string') declared.add(item.attr)
+  }
+  const missing = extractReadBindings(prepared.script).filter(key => !declared.has(key))
+  if (missing.length > 0) {
+    return fail(`脚本读取了未声明的数据绑定：${missing.join('、')}，请在 dataBindings 中声明后重新调用`)
+  }
+
+  const attrs = isPlainObject(element.attrs) ? element.attrs : {}
+  const store = isPlainObject(element.store) ? element.store : {}
+  const inAttrs = Object.prototype.hasOwnProperty.call(attrs, attr)
+  const inStore = !inAttrs
+    && Object.prototype.hasOwnProperty.call(store, attr)
+    && !SYMBOL_NON_BINDABLE_STORE_KEYS.has(attr)
+  if (!inAttrs && !inStore) {
+    const available = [
+      ...Object.keys(attrs),
+      ...Object.keys(store).filter(key => !SYMBOL_NON_BINDABLE_STORE_KEYS.has(key)),
+    ]
+    return fail(`图元 ${target} 不存在可绑定的属性 ${attr}（不存在的属性运行时不生效）。可用属性：${available.join('、')}`)
+  }
+
+  const section = inAttrs ? attrs : store
+  const current = section[attr]
+  // 保留属性原值作为未触发函数时的初始值
+  const initial = isPlainObject(current) && 'func' in current ? current.value : current
+  const updated = { ...section, [attr]: { func: prepared.script, value: initial } }
+  if (inAttrs) element.attrs = updated
+  else element.store = updated
+
+  session.symbolDataBindings = mergeDataBindings(session.symbolDataBindings, bindings)
+  return finishFeatureAttach(ctx, target, element, `${attr} 属性函数`, '动态')
+}
+
 /**
  * 工具执行分发表：工具名 → handler。
  * 基础图元 / 图符图元 / 动态特性按注册表自动接线，其余按名精确登记。
@@ -743,6 +1038,12 @@ function handleInteractiveFeature(ctx: ToolExecContext): string {
  */
 const TOOL_HANDLERS: Record<string, ToolHandler> = {
   declare_generation_plan: handleDeclarePlan,
+  add_event_definition: handleAddEventDefinition,
+  set_display_script: handleSetDisplayScript,
+  set_pipe_script: handleSetPipeScript,
+  set_symbol_attr_function: handleSetSymbolAttrFunction,
+  find_elements: handleFindElements,
+  ask_user: handleAskUser,
   create_metric_panel: handleMetricPanel,
   create_equipment: handleEquipment,
   create_chart_panel: handleChartPanel,
@@ -771,7 +1072,7 @@ if (REGISTRY_WIRING_ERRORS.length > 0) {
  * 执行单个工具调用
  * @returns 工具执行结果字符串
  */
-function executeToolCall(
+export function executeToolCall(
   name: string,
   args: Record<string, unknown>,
   session: SessionState,
@@ -814,7 +1115,7 @@ export async function runAgentLoop(
     const generatedElements = getElementsFromJson(editorType, output)
     const generatedElementKeys = new Set(generatedElements.flatMap(getElementAliases))
     const finalFeatureExecutions = session.featureExecutions.filter(
-      execution => generatedElementKeys.has(execution.elementKey),
+      execution => execution.elementKey.startsWith(DISPLAY_EVENT_KEY) || generatedElementKeys.has(execution.elementKey),
     )
     return [
       ...validateOutput(json, editorType),
@@ -907,7 +1208,7 @@ export async function runAgentLoop(
   if (context.currentJson) {
     messages.push({
       role: 'system',
-      content: `这是上一轮生成的当前 JSON。服务端已将其中图元载入工作区，请基于它增量修改并最终组装完整结果：\n${JSON.stringify(context.currentJson)}`,
+      content: `这是当前图纸/上一轮生成的 JSON。服务端已将其中图元载入工作区，请基于它增量修改并最终组装完整结果：\n${JSON.stringify(context.currentJson)}`,
     })
   }
   messages.push(...history, { role: 'user', content: prompt })
@@ -931,6 +1232,9 @@ export async function runAgentLoop(
     const baseToolCalls = toolCalls
     const baseGenerationPlan = session.generationPlan
     const baseFeatureExecutionCount = session.featureExecutions.length
+    const baseDisplayEventCount = session.displayEvents.length
+    const baseDisplayScript = session.displayScript
+    const baseSymbolDataBindings = session.symbolDataBindings
     // 流内工具是在读流循环里跑的，会被算进 callModel 的 elapsedMs，需单独记账后扣除
     let streamToolMs = 0
 
@@ -962,6 +1266,9 @@ export async function runAgentLoop(
         session.finalJson = undefined
         session.generationPlan = baseGenerationPlan
         session.featureExecutions.length = baseFeatureExecutionCount
+        session.displayEvents.length = baseDisplayEventCount
+        session.displayScript = baseDisplayScript
+        session.symbolDataBindings = baseSymbolDataBindings
         streamedResults.clear()
         toolCalls = baseToolCalls
         onSSEEvent({ type: 'stream_reset' })
@@ -1033,7 +1340,19 @@ export async function runAgentLoop(
       }
       emitMetrics()
 
-      // 如果是组装工具，生成完成
+      // 目标不明确：提问并结束本轮，不产出图纸，等待用户回答
+      if (session.question) {
+        const metrics = buildMetrics()
+        onSSEEvent({ type: 'metrics', metrics })
+        onSSEEvent({ type: 'done' })
+        return {
+          success: false,
+          question: session.question,
+          steps: session.steps,
+          metrics,
+        }
+      }
+
       if (choice.message.tool_calls.some(tc => isAssemblyTool(tc.function.name))) {
         if (session.finalJson) {
           // Schema 校验

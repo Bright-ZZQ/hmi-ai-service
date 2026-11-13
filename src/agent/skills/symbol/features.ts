@@ -6,6 +6,7 @@
  */
 
 import type { SkillRegistryEntry } from '../../../types'
+import { SYMBOL_BINDING_VALUE_TYPES, SYMBOL_FUNC_API_REFERENCE } from '../../script-tools'
 import {
   ADD_FEATURE_BLINK,
   ADD_FEATURE_CHANGE_COLOR,
@@ -55,4 +56,42 @@ export const ADD_FEATURE_WRITE_VALUE_SYMBOL: SkillRegistryEntry = {
 export const ADD_FEATURE_OPEN_PAGE_SYMBOL: SkillRegistryEntry = {
   ...ADD_FEATURE_OPEN_PAGE,
   group: 'symbol',
+}
+
+export const SET_SYMBOL_ATTR_FUNCTION: SkillRegistryEntry = {
+  group: 'symbol',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'set_symbol_attr_function',
+      description: `为图符图元的某个属性设置“函数”数据绑定：由图符数据绑定值（dataBindings）通过脚本计算出属性值，如“温度超过 80 变红”“按开度旋转”“状态为 1 显示文字‘运行’”。
+elementName 为 create_symbol_* 返回的图元 name/node_id；attr 必须是该图元 attrs 或 store 中已存在的属性名（如 fill、stroke、rotation、width、text、opacity），否则运行时不生效，工具会拒绝并列出可用属性。
+脚本读取的每个数据绑定名必须在 dataBindings 中声明（valueType：number/string/boolean/picker 颜色/modal 测点），用户随后在图纸中为这些绑定关联数据源。同一属性重复设置会覆盖。
+设置后调用 assemble_symbol 输出完整图符。
+${SYMBOL_FUNC_API_REFERENCE}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元的 name 或 node_id' },
+          attr: { type: 'string', description: '要由函数计算的属性名，如 fill、stroke、rotation、text' },
+          script: { type: 'string', description: '属性绑定函数体，必须 return 属性值' },
+          dataBindings: {
+            type: 'array',
+            description: '本脚本用到的数据绑定声明，已声明过的可省略',
+            items: {
+              type: 'object',
+              properties: {
+                attr: { type: 'string', description: '绑定名，字母/数字/下划线，如 temp' },
+                name: { type: 'string', description: '显示名称，如 温度' },
+                valueType: { type: 'string', enum: [...SYMBOL_BINDING_VALUE_TYPES] },
+                defaultValue: { description: '默认值，类型与 valueType 一致' },
+              },
+              required: ['attr', 'valueType'],
+            },
+          },
+        },
+        required: ['elementName', 'attr', 'script'],
+      },
+    },
+  },
 }

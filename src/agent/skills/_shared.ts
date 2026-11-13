@@ -121,7 +121,7 @@ export function createGenerationPlanSkill(group: EditorType): SkillRegistryEntry
             requiredFeatureTools: {
               type: 'array',
               items: { type: 'string' },
-              description: '必须成功执行的 add_feature_* 工具名列表；每个条目代表一次特性应用，重复需求需重复填写，无特性则传空数组',
+              description: '必须成功执行的 add_feature_* / add_event_definition 工具名列表；每个条目代表一次特性应用，重复需求需重复填写，无特性则传空数组',
             },
             distinctFeatureTargets: { type: 'boolean', description: 'requiredFeatureTools 中各次特性应用是否必须绑定到互不相同的图元' },
           },
