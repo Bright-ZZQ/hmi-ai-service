@@ -229,6 +229,9 @@ export interface TextParams {
   zIndex?: number
 }
 
+const TEXT_H_ALIGN: Record<string, number> = { left: 0, center: 1, right: 2 }
+const TEXT_V_ALIGN: Record<string, number> = { top: 0, middle: 1, bottom: 2 }
+
 export function buildText(params: TextParams) {
   const {
     text,
@@ -238,8 +241,8 @@ export function buildText(params: TextParams) {
     fontSize = 14,
     fontFamily = 'Microsoft YaHei',
     fill = '#000000',
-    textAlign = 'left',
-    textBaseline = 'top',
+    textAlign = 'center',
+    textBaseline = 'middle',
     bold = false,
     italic = false,
     underline = false,
@@ -264,17 +267,18 @@ export function buildText(params: TextParams) {
     localRect,
     roatePos,
     text: encodedText,
-    fontSize,
-    fontFamily,
+    // 编辑器标准格式：family,size,-1,5,bold,italic,underline,deleteline,letterSpacing,0
+    font: `${fontFamily},${fontSize},-1,5,${bold ? 1 : 0},${italic ? 1 : 0},${underline ? 1 : 0},0,0,0`,
+    underline,
+    deleteline: false,
     textColor: { startColor: fill },
     fillColor: { startColor: fill },
     borderColor: { startColor: 'rgba(255,255,255,0)' },
     borderWidth: 0,
-    textAlign,
-    textBaseline,
-    bold,
-    italic,
-    underline,
+    textWrap: 0,
+    // 编辑器使用数值枚举：水平 0左/1中/2右，垂直 0上/1中/2下
+    textHAlign: TEXT_H_ALIGN[textAlign] ?? 1,
+    textVAlign: TEXT_V_ALIGN[textBaseline] ?? 1,
     zIndex,
   }
 }
