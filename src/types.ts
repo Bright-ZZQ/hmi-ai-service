@@ -13,9 +13,20 @@ export interface ConversationMessage {
   content: string
 }
 
+/** 调用编辑器模型点校验接口所需的配置 */
+export interface ModelPointApiConfig {
+  /** 编辑器后端网关地址，如 http://host:8700 */
+  baseUrl: string
+  /** 透传前端请求的 Authorization */
+  authorization?: string
+  /** 透传前端请求的工程 namespace（projectCode） */
+  namespace?: string
+}
+
 export interface AgentContext {
   history?: ConversationMessage[]
   currentJson?: Record<string, unknown>
+  modelPointApi?: ModelPointApiConfig
 }
 
 /** OpenAI 兼容的 Tool Definition */
@@ -111,6 +122,8 @@ export interface AgentConfig {
   modelApiRetryMaxDelay: number
   /** 429 限流重试基础延迟（ms，默认 60000） */
   modelApiRateLimitRetryDelay: number
+  /** 单次模型调用的最大输出 token（含推理模型的思考 token，默认 16384） */
+  maxTokens?: number
 }
 
 /** 流式绘制的画布信息 */

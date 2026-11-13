@@ -64,9 +64,12 @@ function original(value: unknown): FeatureParam {
 }
 
 function dataPoint(value: unknown): Record<string, string> {
+  if (typeof value === 'string' && value.trim()) {
+    return { ...modelPoint(value), type: 'm', domain: '-1', nodeType: '' }
+  }
   return {
     nodeId: '',
-    tagName: typeof value === 'string' ? value : '',
+    tagName: '',
     nodeType: '',
   }
 }
@@ -85,19 +88,26 @@ function modelPoint(value: unknown): Record<string, string> {
   }
 }
 
+/** 写值特性运行时要求数据源带 domain，模型点域固定为 '-1'。 */
+function writeDataPoint(value: unknown): Record<string, string> {
+  return { ...modelPoint(value), domain: '-1' }
+}
+
 function isConditionSpecifiedByUser(args: Record<string, unknown>): boolean {
   return args.conditionSpecifiedByUser === true
 }
 
 function buildConditions(args: Record<string, unknown>): Record<string, unknown>[] {
   if (!isConditionSpecifiedByUser(args) || !args.dataSourceKey) return []
+  // 后端按 leftValue 订阅测点并计算条件，logic 为编辑器校验必填；nodeType 等字段由 model-point-resolver 在组装后补全
+  const leftValue: Record<string, string> = { ...writeDataPoint(args.dataSourceKey), type: 'm' }
   return [{
-    num: '1',
-    leftValue: dataPoint(args.dataSourceKey),
+    num: globalThis.crypto.randomUUID(),
+    leftValue,
     sign: Number(args.conditionOperator ?? 0),
     rightValue: { original: String(args.conditionValue ?? '1'), ref: '' },
     logicSign: 0,
-    logic: '',
+    logic: leftValue.nodeId,
     conditions: [],
   }]
 }
@@ -343,7 +353,7 @@ function buildWriteValuePars(args: Record<string, unknown>): Record<string, Feat
   const writeMode = Number(args.writeMode ?? 0)
   const confirmEnable = Number(args.confirmEnable ?? 0)
   const pars: Record<string, FeatureParam> = {
-    ds: original(modelPoint(args.dataSourceKey)),
+    ds: original(writeDataPoint(args.dataSourceKey)),
     writeMode: original(writeMode),
     confirmEnable: original(confirmEnable),
     value: original(Number(args.value ?? 0)),
@@ -362,8 +372,8 @@ function buildWriteValuePars(args: Record<string, unknown>): Record<string, Feat
       pars.mu = original(Number(args.mu ?? 100))
       pars.md = original(Number(args.md ?? 0))
     } else if (rangeMode === RANGE_MODE.DATABASE) {
-      pars.muItem = original(modelPoint(args.muDataSourceKey))
-      pars.mdItem = original(modelPoint(args.mdDataSourceKey))
+      pars.muItem = original(writeDataPoint(args.muDataSourceKey))
+      pars.mdItem = original(writeDataPoint(args.mdDataSourceKey))
     }
     if (confirmEnable) {
       pars.confirmDes = original(String(args.confirmDes ?? ''))
@@ -372,7 +382,7 @@ function buildWriteValuePars(args: Record<string, unknown>): Record<string, Feat
   }
 
   if (writeMode === DIGITAL_WRITE_MODE.REVERSE) {
-    pars.readItem = original(args.readItemDataSourceKey ? modelPoint(args.readItemDataSourceKey) : {})
+    pars.readItem = original(args.readItemDataSourceKey ? writeDataPoint(args.readItemDataSourceKey) : {})
   }
   if (writeMode === DIGITAL_WRITE_MODE.FIXED) {
     pars.value = original(Number(args.value ?? 0))

@@ -75,6 +75,13 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
         currentJson: currentJson && typeof currentJson === 'object' && !Array.isArray(currentJson)
           ? currentJson
           : undefined,
+        modelPointApi: config.editorSvcUrl
+          ? {
+              baseUrl: config.editorSvcUrl,
+              authorization: req.header('authorization') || undefined,
+              namespace: req.header('namespace') || undefined,
+            }
+          : undefined,
       },
     )
 

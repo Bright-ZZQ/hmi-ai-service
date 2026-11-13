@@ -74,15 +74,22 @@ describe('buildDynamicFeature', () => {
     for (const [toolName, featureType] of cases) {
       const feature = buildDynamicFeature(toolName, {
         conditionSpecifiedByUser: true,
-        dataSourceKey: 'device.status',
+        dataSourceKey: '101:XAS_001.AV',
         conditionOperator: 0,
         conditionValue: '1',
       })
       assert.equal(feature.name, featureType)
       assert.equal(feature.type, featureType)
       assert.equal(feature.conditions.length, 1)
-      assert.equal(feature.conditions[0].leftValue.tagName, 'device.status')
-      assert.equal(feature.conditions[0].rightValue.original, '1')
+      const condition = feature.conditions[0]
+      assert.equal(condition.leftValue.tagName, '101:XAS_001')
+      assert.equal(condition.leftValue.itemName, 'AV')
+      assert.equal(condition.leftValue.nodeId, '101:XAS_001.AV')
+      assert.equal(condition.leftValue.type, 'm')
+      assert.equal(condition.leftValue.domain, '-1')
+      assert.equal(condition.logic, '101:XAS_001.AV')
+      assert.notEqual(condition.num, '')
+      assert.equal(condition.rightValue.original, '1')
       assert.equal(Object.keys(feature.pars).some(key => key.endsWith('Ref')), false)
     }
   })
@@ -110,7 +117,9 @@ describe('buildDynamicFeature', () => {
       md: 0,
     })
 
-    assert.equal(feature.pars.ds.original.tagName, 'motor.rpm')
+    assert.equal(feature.pars.ds.original.tagName, 'motor')
+    assert.equal(feature.pars.ds.original.itemName, 'rpm')
+    assert.equal(feature.pars.ds.original.nodeId, 'motor.rpm')
     assert.equal(feature.pars.mu.original, 3000)
     assert.equal('rotAngle' in feature.pars, false)
   })
@@ -124,7 +133,8 @@ describe('buildDynamicFeature', () => {
       hDistance: 120,
     })
 
-    assert.equal(feature.pars.hDs.original.tagName, 'valve.position')
+    assert.equal(feature.pars.hDs.original.tagName, 'valve')
+    assert.equal(feature.pars.hDs.original.itemName, 'position')
     assert.equal(feature.pars.hDistance.original, 120)
     assert.equal('vDs' in feature.pars, false)
   })
@@ -205,7 +215,8 @@ describe('buildDynamicFeature', () => {
     assert.equal(alwaysOn.pars.isVisible.original, 1)
     assert.deepEqual(alwaysOn.conditions, [])
     assert.equal(hiddenWhenTrue.pars.isVisible.original, 0)
-    assert.equal(hiddenWhenTrue.conditions[0].leftValue.tagName, 'pump.run')
+    assert.equal(hiddenWhenTrue.conditions[0].leftValue.tagName, 'pump')
+    assert.equal(hiddenWhenTrue.conditions[0].leftValue.itemName, 'run')
   })
 })
 
