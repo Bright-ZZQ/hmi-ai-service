@@ -11,6 +11,7 @@
  */
 
 import type { EditorType } from '../../types'
+import { decodeHtmlEntities } from '../text-entities'
 
 // ============================================================
 // 通用工具函数
@@ -234,7 +235,6 @@ const TEXT_V_ALIGN: Record<string, number> = { top: 0, middle: 1, bottom: 2 }
 
 export function buildText(params: TextParams) {
   const {
-    text,
     x, y,
     width = 200,
     height = 40,
@@ -253,6 +253,9 @@ export function buildText(params: TextParams) {
 
   const localRect = calcLocalRect(x, y, width, height)
   const roatePos = calcRoatePos(x, y, width, height)
+
+  // 模型可能漏传或传入非字符串的 text，缺省按空文本处理，避免 Buffer.from(undefined) 抛错
+  const text = decodeHtmlEntities(typeof params.text === 'string' ? params.text : params.text == null ? '' : String(params.text))
 
   // 文本内容 base64 编码后存储
   const encodedText = Buffer.from(text, 'utf-8').toString('base64')

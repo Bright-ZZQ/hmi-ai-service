@@ -69,7 +69,7 @@ export function createUpdateElementSkill(group: EditorType): SkillRegistryEntry 
         name: 'update_element',
         description: `修改当前图纸/图符中已有图元。target 可传图元的 id、code、key 或 name。
 changesJson 必须是 JSON 对象字符串，服务端会递归合并对象、整体替换数组，并保留未提及字段。
-例如：target="矩形", changesJson="{\\"store\\":{\\"fill\\":\\"#4488FF\\"}}"。修改完成后必须调用 assemble_display 或 assemble_symbol。`,
+例如：target="矩形", changesJson="{\\"store\\":{\\"fill\\":\\"#4488FF\\"}}"。修改图纸文字图元内容时 changesJson 的 text 直接传原始文字（如 {\\"text\\":\\"新文字\\"}），服务端会自动 base64 编码，不要自行编码。修改完成后必须调用 assemble_display 或 assemble_symbol。`,
         parameters: {
           type: 'object',
           properties: {

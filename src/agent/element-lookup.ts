@@ -29,6 +29,19 @@ export function decodeText(raw: unknown): string | undefined {
   return normalize(Buffer.from(decoded, 'utf-8').toString('base64')) === normalize(raw) ? decoded : raw
 }
 
+/** 是否为编辑器 atob 可严格解码、且为合法 UTF-8 的 base64 文本 */
+export function isEncodedText(raw: string): boolean {
+  if (raw === '') return true
+  if (raw.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return false
+  const decoded = Buffer.from(raw, 'base64').toString('utf-8')
+  return Buffer.from(decoded, 'utf-8').toString('base64') === raw
+}
+
+/** 将文字图元的原始文本编码为编辑器存储格式（base64） */
+export function encodeText(text: string): string {
+  return Buffer.from(text, 'utf-8').toString('base64')
+}
+
 function getBounds(element: Record<string, unknown>): { x: number, y: number, width: number, height: number } {
   const rect = element.localRect
   if (Array.isArray(rect) && rect.length > 0) {

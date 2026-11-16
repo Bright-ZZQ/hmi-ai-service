@@ -5,6 +5,8 @@
  * fill the stable className/attrs/store structure required by the symbol editor.
  */
 
+import { decodeHtmlEntities } from '../text-entities'
+
 function generateNodeId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let id = ''
@@ -125,7 +127,7 @@ function buildText(args: Record<string, unknown>) {
   const height = number(args.height, 40)
   const attrs: Record<string, unknown> = {
     ...commonAttrs({ ...args, fill: args.fill ?? '#000000' }, '文本'),
-    text: string(args.text, '文字'),
+    text: decodeHtmlEntities(string(args.text, '文字')),
     x: number(args.x, 0),
     y: number(args.y, 0),
     width,
