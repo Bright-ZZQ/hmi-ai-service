@@ -8,6 +8,7 @@
  * 运行时仅取 actions[0] 执行，因此一条事件只配置一个动作。
  */
 import { randomUUID } from 'node:crypto'
+import { hasDynamicPageParamName } from './page-params'
 
 export const MOUSE_EVENT_TYPES = [
   'onClick',
@@ -56,7 +57,7 @@ export const NODE_SELF = 'node-self'
 export const NODE_API_REFERENCE = `data：setVisibleEx(bool)/getVisibleEx() 显隐；setXEx/getXEx、setYEx/getYEx 位置；setRotationEx/getRotationEx 旋转；setScaleXEx/getScaleXEx、setScaleYEx/getScaleYEx 缩放；setWidthEx/getWidthEx、setHeightEx/getHeightEx 尺寸；setBackgroundColorEx(color)/getBackgroundColorEx() 背景(填充)色；setBorderColorEx/getBorderColorEx 边框色；setTextColorEx/getTextColorEx 文本色；setTextEx(text)/getTextEx() 文本内容(仅文本图元)；getAttr(attr)/setAttr(attr,value) 通用属性；getChildrenEx() 子图元；getShapeEx() 图元类型。`
 
 /** 图纸（gv）可用函数参考 */
-export const GV_API_REFERENCE = `gv：findNodeByIdEx(id) 查找图元；setZoomEx({x,y})/getZoomEx()；setPageParamsEx(name,value)/getPageParamsEx(name)；setLayerVisibleByIndexEx(index,visible)/getLayerVisibleByIndexEx(index)；setLayerVisibleByNameEx(name,visible)/getLayerVisibleByNameEx(name)。`
+export const GV_API_REFERENCE = `gv：findNodeByIdEx(id) 查找图元；setZoomEx({x,y})/getZoomEx()；setPageParamsEx(name,value)/getPageParamsEx(name) 读写页面参数（name 必须是字符串字面量，如 gv.setPageParamsEx("fanRunning", 1)，服务端组装时会自动声明；不要用变量作参数名）；setLayerVisibleByIndexEx(index,visible)/getLayerVisibleByIndexEx(index)；setLayerVisibleByNameEx(name,visible)/getLayerVisibleByNameEx(name)。`
 
 /** 通用函数（hmi.utils）参考 */
 export const UTILS_API_REFERENCE = `通用：
@@ -109,6 +110,9 @@ export function validateScript(
   if (!script) return '缺少 script 参数'
   for (const [pattern, label] of FORBIDDEN_PATTERNS) {
     if (pattern.test(script)) return `脚本包含禁止使用的能力：${label}`
+  }
+  if (hasDynamicPageParamName(script)) {
+    return '页面参数名必须是字符串字面量（如 gv.getPageParamsEx("fanRunning")），不能用变量，否则无法自动声明页面参数'
   }
   try {
     // 仅编译不执行，用于语法检查；形参与运行时一致，才能发现与形参重名的声明
@@ -321,6 +325,15 @@ export function buildEventDefinition(input: EventDefinitionInput): Record<string
     return { error: `${input.action} 动作需要 targetElements（先用 find_elements 确定目标图元）` }
   }
   const nodes = preOpen ? [] : input.nodeIds
+
+  // 未配置目标图元时运行时 data 为 undefined，直接访问 data 的成员会报错
+  if (input.action === 'script' && nodes.length === 0 && /\bdata\s*(\.|\[)/.test(action.payload)) {
+    return {
+      error: preOpen
+        ? '画面打开前的脚本只有 gv 参数，不能使用 data'
+        : '脚本使用了 data，但未配置目标图元，运行时 data 为 undefined。请通过 targetElements 指定目标图元，或改用 gv.findNodeByIdEx("图元ID") 获取图元',
+    }
+  }
   const actions = [action]
 
   if (input.target === 'element') {

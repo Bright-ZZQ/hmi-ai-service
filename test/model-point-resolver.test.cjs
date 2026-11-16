@@ -115,6 +115,32 @@ describe('enrichModelPoints', () => {
     }
   })
 
+  it('rejects scripts that use data without a target element', () => {
+    const input = {
+      target: 'display', title: 't', nodeIds: [], mouseEvent: 'onClick', eventScope: 'current',
+      trigger: 'onOpenAfter', handleId: '', schedule: {}, dataSourceKeys: [], action: 'script',
+    }
+    const bad = buildEventDefinition({ ...input, args: { script: 'data.setVisibleEx(true)' } })
+    assert.match(bad.error, /data/)
+    const ok = buildEventDefinition({ ...input, nodeIds: ['n1'], args: { script: 'data.setVisibleEx(true)' } })
+    assert.equal(ok.error, undefined)
+    const viaGv = buildEventDefinition({ ...input, args: { script: 'gv.findNodeByIdEx("a")' } })
+    assert.equal(viaGv.error, undefined)
+  })
+
+  it('enriches multistate condition points', async () => {
+    const feature = buildDynamicFeature('add_feature_multistate_text', {
+      states: [{ dataSourceKey: '101:XAS_001.AV', conditionValue: '1', text: '运行' }],
+    })
+
+    await enrichModelPoints({ elements: [{ store: { dynamicDyna: [feature] } }] }, { baseUrl })
+
+    const leftValue = feature.multiStateConditions[0].conditions[0].leftValue
+    assert.equal(leftValue.nodeType, 'EQ')
+    assert.equal(leftValue._unique, '3887/3890')
+    assert.equal(feature.multiStateConditions[0].conditions[0].logic, '101:XAS_001.AV')
+  })
+
   it('does nothing when the editor service is not configured', async () => {
     const { document, feature } = buildDocument('101:XAS_001.AV')
     requests.length = 0

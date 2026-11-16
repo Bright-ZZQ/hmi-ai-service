@@ -82,10 +82,30 @@ export function validateGenerationPlan(
     featureExecutions,
     plan.distinctFeatureTargets,
   )) {
-    errors.push(plan.distinctFeatureTargets
+    const base = plan.distinctFeatureTargets
       ? '动态特性工具未按生成计划完整执行，或未绑定到互不相同的图元'
-      : '动态特性工具未按生成计划完整执行')
+      : '动态特性工具未按生成计划完整执行'
+    errors.push(`${base}。${describeFeatureGap(plan.requiredFeatureTools, featureExecutions)}`
+      + '请只补调缺少的特性工具（目标须是最终组装结果中的图元），再重新调用 assemble 工具；'
+      + '若计划中的 requiredFeatureTools 与实际需求不符，请先重新调用 declare_generation_plan 修正')
   }
 
   return errors
+}
+
+function countByTool(names: string[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
+  return counts
+}
+
+function describeFeatureGap(required: string[], executions: FeatureExecution[]): string {
+  const need = countByTool(required)
+  const done = countByTool(executions.map(execution => execution.toolName))
+  const missing = [...need].flatMap(([tool, count]) => {
+    const lack = count - (done.get(tool) ?? 0)
+    return lack > 0 ? [`${tool} 还缺 ${lack} 次`] : []
+  })
+  const fmt = (counts: Map<string, number>) => [...counts].map(([tool, count]) => `${tool}×${count}`).join('、') || '无'
+  return `计划要求：${fmt(need)}；最终图纸中已有效执行：${fmt(done)}${missing.length ? `；缺少：${missing.join('、')}` : ''}。`
 }

@@ -38,7 +38,10 @@ import {
   parseDataBindings,
   prepareScript,
 } from './script-tools'
-import { findElementBriefs } from './element-lookup'
+import { findDisplayInteractionIssues, normalizeRotatePivots } from './display-integrity'
+import { collectPageParamNames, ensurePageParams } from './page-params'
+import { decodeText, encodeText, findElementBriefs, isEncodedText } from './element-lookup'
+import { decodeHtmlEntities } from './text-entities'
 import type { FeatureExecution, GenerationPlan } from './generation-plan'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
@@ -74,7 +77,9 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 ## 动态特性
 
 - 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`，数值显示 → \`add_feature_num_display\`，显隐 → \`add_feature_visible\`。
-- 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`。
+- 缩放（数值驱动比例缩放） → \`add_feature_scale\`，填充（液位/进度，按比例填充） → \`add_feature_fill\`，流动（线/管道流动动画） → \`add_feature_dash_flow\`，操作使能（条件控制能否操作） → \`add_feature_operation_enable\`。
+- 多状态文字 → \`add_feature_multistate_text\`，多状态颜色 → \`add_feature_multistate_color\`：每个状态自带“测点 + 运算符 + 比较值”条件，状态条件必须来自用户明确描述（\`states\`），缩放/填充需要驱动测点 \`dsDataSourceKey\`。
+- 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`，Tip 提示 → \`add_feature_tip_show\`，置位（脉冲/电平输出） → \`add_feature_reset\`。
 - 事件定义（属性栏 - 控制 - 事件定义）统一用 \`add_event_definition\`，这是对**当前图纸**的修改，不得新建图元：
   - scope=element：图元鼠标事件（单击/双击/移入/离开/悬停/按下/抬起），动作可为脚本、显隐、移动、旋转、缩放、尺寸、变色、弹窗、打开窗口，或向其他图纸发送事件(eventScope=other + handleId)。
   - scope=display：图纸级事件。trigger=respond 事件响应（需 handleId，由图元事件/其他事件广播触发）；schedule 定时执行（间隔/每天/每周/每月）；valueChanged 数值变化（需测点全路径）；onOpenBefore 画面打开前（仅脚本）；onOpenAfter 画面打开后。
@@ -96,7 +101,10 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 只有用户明确要求“颜色闪烁”时才使用 \`blinkMethod=1\` 并设置 \`forceColorBlink=true\`；此时按目标类型开启填充、边框或文字颜色开关。
 - 颜色闪烁的填充色必须与图元当前背景色有明显对比；对比度低于 3:1 时，服务端自动改用黑色或白色对比色。
 - 变色时必须至少开启 \`isFullClr\`、\`isFrameClr\`、\`isTextClr\` 中一项，并提供对应颜色。
-- 显隐使用 \`isVisible\`：1=条件满足显示，0=条件满足隐藏。用户未指定条件时特性持续生效。
+- 显隐使用 \`isVisible\`：1=条件满足显示，0=条件满足隐藏。用户未指定条件时特性持续生效，因此无条件的 \`isVisible=0\` 会让图元永久不可见，禁止使用（不要的图元请删除）。
+- 需要旋转的图元（扇叶、风机、转轮等）必须绕与其同轴部件（轮毂等）相同的圆心旋转：图元的包围盒中心与轮毂圆心一致时用默认旋转中心；不一致时（如 3 叶片等奇数叶片多边形，包围盒中心会偏离圆心）调用 \`add_feature_rotate\` 时传 \`pivotX/pivotY\`=轮毂圆心的画布绝对坐标。修改已有图元的 roatePos 时，旋转特性的 rotCenter 必须为 0，服务端组装时会自动校正。
+- 编辑已有图纸时，为已有说明文字补充/改写文字：必须用 \`update_element\` 修改该文字本身（或 \`delete_element\` 删除后再新建），禁止在旧文字原位置再新建一个文字造成重叠；新增文字必须避开所有已有文字。
+- 脚本里用 gv.setPageParamsEx/getPageParamsEx 保存启停等状态时，参数名必须是字符串字面量，服务端会在组装时自动声明；不要用变量作参数名。启停类脚本的目标图元必须是最终可见的图元，同一按钮不要为同一效果重复配置多条脚本。
 - 写值必须传入要写入的测点 \`dataSourceKey\`；开关量用 \`valueType=digital\`（默认，反转或写 0/1），模拟量用 \`valueType=analog\`。触发事件默认单击。
 - 打开画面必须指定目标：图纸用 \`pageName\`，网页用 \`webPath\`。弹窗打开时设置 \`popType=1\` 并配置位置/尺寸。
 
@@ -125,7 +133,8 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 - 当系统提供“当前 JSON”时，表示画布上已有内容（可能是用户手工绘制或上一轮生成的），用户要在它的基础上修改，**不是**重新生成
 - 默认保留所有已有图元，只做用户要求的改动：新增内容用 create_* 工具追加；修改已有图元优先调用 update_element；删除图元调用 delete_element
-- 只有用户明确要求“清空/重画/重新生成/替换全部”时，才可以用 delete_element 删除已有图元；否则禁止删除或重建用户未提及的图元
+- 只有用户明确要求“清空/重画/重新生成/替换全部”时，才可以用 delete_element 删除**用户未提及**的已有图元；否则禁止删除或重建用户未提及的图元
+- 用户要求修复、重做或替换某个图元/设备时，被替换掉的旧图元（包括你上一轮生成的）必须用 delete_element 删除，禁止用显隐特性（add_feature_visible）或事件把旧图元“隐藏”后另建新的；事件与特性必须作用于最终可见的图元，不得残留指向已删除或隐藏图元的事件
 - 不得重复创建已存在的图元；新增图元的位置必须在现有画布尺寸（当前 JSON 的 pageWidth/pageHeight 或 width/height）之内，并避开已有图元占据的区域，不得覆盖已有内容；画布尺寸、背景色、图纸名称保持不变，除非用户明确要求修改
 - 编辑模式下 declare_generation_plan 的 expectedElementCount 表示**本轮新增**的图元数量；用户未明确要求新增数量时（含仅修改/删除、或新增数量不确定）必须省略，不要填 0
 - target 优先使用稳定的 id/code/key，其次使用 name
@@ -309,6 +318,55 @@ function findElementIndex(elements: Record<string, unknown>[], target: string): 
   return elements.findIndex(element => getElementAliases(element).includes(target))
 }
 
+function getInvalidSizeError(element: Record<string, unknown>): string | undefined {
+  if (element.type === 'Group') return undefined
+  const isValid = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0
+  if (!isValid(element.width) || !isValid(element.height)) {
+    return `width/height 必须是大于 0 的有限数字（当前 width=${String(element.width)}, height=${String(element.height)}）`
+  }
+  const rect = element.localRect
+  if (Array.isArray(rect) && rect.some(p => !isPlainObject(p) || !Number.isFinite(p.x) || !Number.isFinite(p.y))) {
+    return 'x/y 必须是有限数字'
+  }
+  return undefined
+}
+
+/**
+ * 模型显式传入 elementsData 时往往是自行转写的副本，会丢失 store 中的动态/交互特性。
+ * 按 id/名称回溯到工作区中的原图元，找不到才沿用传入内容。
+ */
+function resolveExplicitElements(
+  explicit: unknown,
+  working: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  if (!Array.isArray(explicit)) return working
+  const resolved: Record<string, unknown>[] = []
+  for (const item of explicit) {
+    if (!isPlainObject(item)) continue
+    const index = typeof item.id === 'string' ? findElementIndex(working, item.id) : -1
+    // 名称可能重复，仅在唯一匹配时才按名称回溯，避免多个图元被折叠成同一个
+    const nameMatches = index < 0 && typeof item.name === 'string'
+      ? working.filter(element => getElementAliases(element).includes(item.name as string))
+      : []
+    const matched = index >= 0 ? working[index] : nameMatches.length === 1 ? nameMatches[0] : item
+    if (!resolved.includes(matched)) resolved.push(matched)
+  }
+  return resolved
+}
+
+/** 兜底：模型自行转写的文字图元可能携带未编码的原始文字，组装前统一修正为 base64 */
+function ensureEncodedTexts(elements: Record<string, unknown>[]): Record<string, unknown>[] {
+  return elements.map((element) => {
+    if (element.type !== 'Text' || typeof element.text !== 'string') return element
+    if (!isEncodedText(element.text)) {
+      return { ...element, text: encodeText(decodeHtmlEntities(element.text)) }
+    }
+    const raw = decodeText(element.text) ?? ''
+    const cleaned = decodeHtmlEntities(raw)
+    return cleaned === raw ? element : { ...element, text: encodeText(cleaned) }
+  })
+}
+
 function getElementFillColor(element: Record<string, unknown>): string | undefined {
   const fillColor = isPlainObject(element.fillColor) ? element.fillColor : undefined
   if (typeof fillColor?.startColor === 'string') return fillColor.startColor
@@ -398,6 +456,14 @@ function handleDeclarePlan({ name, args, session, onStep }: ToolExecContext): st
 function handleCreateDisplayElement({ name, args, session, onStep, emit }: ToolExecContext): string {
   const elementType = TOOL_TO_ELEMENT_TYPE[name]
   const element = buildDisplayElement(elementType, args)
+  // 缺少/非法的尺寸参数会生成残缺图元，直接拒绝并让模型重新创建，避免污染工作区
+  const sizeError = getInvalidSizeError(element)
+  if (sizeError) {
+    return JSON.stringify({
+      success: false,
+      error: `${name} 参数不合法：${sizeError}。该图元未创建，请补全 x/y/width/height 等必填参数后重新调用`,
+    })
+  }
   session.workingElements.push(element)
 
   const step: AgentStep = {
@@ -557,6 +623,11 @@ function handleUpdateElement({ name, args, session, onStep, emit }: ToolExecCont
     })
   }
 
+  // 图纸文字图元的 text 以 base64 存储，模型传入的是原始文字，必须编码，否则编辑器 atob 解码失败
+  if (session.editorType === 'display' && typeof changes.text === 'string') {
+    changes = { ...changes, text: encodeText(decodeHtmlEntities(changes.text)) }
+  }
+
   session.workingElements[index] = mergeElement(session.workingElements[index], changes)
   const step: AgentStep = {
     type: 'tool_call',
@@ -597,9 +668,13 @@ function handleDeleteElement({ name, args, session, onStep, emit }: ToolExecCont
 
 // 图纸组装
 function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecContext): string {
-  const elementsData = (args.elementsData as Record<string, unknown>[])
+  const elementsData = args.elementsData
   // 如果模型传了空数组或未传，自动使用 session 中已创建的所有图元
-  const effectiveElements = (elementsData && elementsData.length > 0) ? elementsData : session.workingElements
+  const effectiveElements = normalizeRotatePivots(ensureEncodedTexts(
+    (Array.isArray(elementsData) && elementsData.length > 0)
+      ? resolveExplicitElements(elementsData, session.workingElements)
+      : session.workingElements,
+  ), getElementsFromJson('display', session.currentJson))
   const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
   const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
   // 编辑已有图纸时，新增图元叠放在已有图元之上，已有图元的层级保持不变
@@ -650,6 +725,13 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
       elements: finalElements,
     }
   }
+
+  // 脚本以字面量引用的页面参数必须已声明，否则运行时 setPageParamsEx 无效、getPageParamsEx 返回 undefined
+  const finalDocument = document.document as Record<string, unknown>
+  finalDocument.pageParams = ensurePageParams(
+    finalDocument.pageParams,
+    collectPageParamNames([finalDocument.elements, finalDocument.pageProperty]),
+  )
 
   session.finalJson = document
   session.canvas = getCanvasFromJson('display', document)
@@ -774,7 +856,7 @@ function finishFeatureAttach(
   return JSON.stringify({ success: true, element })
 }
 
-// 动态特性（旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐）
+// 动态特性（旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐 / 缩放 / 填充 / 流动 / 操作使能 / 多状态文字 / 多状态颜色）
 function handleDynamicFeature(ctx: ToolExecContext): string {
   const { name, args, session } = ctx
   if (!isDynamicFeatureTool(name)) {
@@ -786,15 +868,36 @@ function handleDynamicFeature(ctx: ToolExecContext): string {
   }
 
   const { target, element } = resolved
+  if (name === 'add_feature_visible' && Number(args.isVisible ?? 1) === 0 && args.not !== true
+    && !(args.conditionSpecifiedByUser === true && args.dataSourceKey)) {
+    return JSON.stringify({
+      success: false,
+      error: '无条件的 isVisible=0 会让图元永久不可见，已拒绝。不要的图元请用 delete_element 删除；'
+        + '仅当用户明确指定了触发条件时才能配置“条件满足隐藏”',
+    })
+  }
+  const pivotX = Number(args.pivotX)
+  const pivotY = Number(args.pivotY)
+  const hasPivot = name === 'add_feature_rotate' && session.editorType === 'display'
+    && args.pivotX != null && args.pivotY != null && Number.isFinite(pivotX) && Number.isFinite(pivotY)
+  if (hasPivot) {
+    // 旋转中心落在指定点：写入图元 roatePos，并用“偏移中心”让运行时保留该点
+    element.roatePos = { x: pivotX, y: pivotY }
+  }
   const featureArgs = name === 'add_feature_blink'
     ? { ...args, elementFillColor: getElementFillColor(element) }
-    : args
-  const feature = buildDynamicFeature(name, featureArgs)
+    : hasPivot ? { ...args, rotCenter: 0 } : args
+  let feature: ReturnType<typeof buildDynamicFeature>
+  try {
+    feature = buildDynamicFeature(name, featureArgs)
+  } catch (error) {
+    return JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) })
+  }
   attachFeatureToElement(element, 'dynamicDyna', feature)
   return finishFeatureAttach(ctx, target, element, feature.type, '动态')
 }
 
-// 交互特性（写值 / 打开页面）
+// 交互特性（写值 / 打开页面 / Tip 显示 / 置位）
 function handleInteractiveFeature(ctx: ToolExecContext): string {
   const { name, args, session } = ctx
   if (!isInteractiveFeatureTool(name)) {
@@ -889,8 +992,8 @@ function handleAddEventDefinition(ctx: ToolExecContext): string {
     const resolved = resolveFeatureTarget(session, args)
     if ('error' in resolved) return JSON.stringify({ success: false, error: resolved.error })
     owner = resolved
-    // 图元事件缺省对自身执行动作（脚本除外，脚本可自行查找图元）
-    if (nodeIds.length === 0 && action !== 'script') nodeIds.push(NODE_SELF)
+    // 图元事件缺省对自身执行动作；脚本同样默认以自身为目标，保证 data 不为 undefined
+    if (nodeIds.length === 0) nodeIds.push(NODE_SELF)
   }
 
   const event = buildEventDefinition({
@@ -1094,7 +1197,14 @@ export function executeToolCall(
 ): string {
   const handler = TOOL_HANDLERS[name]
   if (!handler) return JSON.stringify({ error: `未知工具: ${name}` })
-  return handler({ name, args, session, onStep, emit })
+  try {
+    return handler({ name, args, session, onStep, emit })
+  } catch (error) {
+    // 单个工具参数异常不应中断整轮生成，把错误回传给模型让其修正后重试
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`[AgentService] tool ${name} failed: ${message}`)
+    return JSON.stringify({ success: false, error: `${name} 执行失败: ${message}，请检查参数后重新调用` })
+  }
 }
 
 // ============================================================
@@ -1136,8 +1246,14 @@ export async function runAgentLoop(
     const plannedElementCount = isEditing
       ? countNewElements(generatedElements, baseElements)
       : generatedElements.length
+    // 已有图纸本身存在的问题不由本轮负责，只拦截本轮新引入的
+    const baseInteractionIssues = new Set(editorType === 'display' ? findDisplayInteractionIssues(baseElements) : [])
+    const interactionIssues = editorType === 'display'
+      ? [...new Set(findDisplayInteractionIssues(generatedElements))].filter(issue => !baseInteractionIssues.has(issue))
+      : []
     return [
       ...omitUnchangedBaseElementErrors(validateOutput(json, editorType), generatedElements, baseElements),
+      ...interactionIssues.map(message => ({ path: 'elements', message })),
       ...validateGenerationPlan(
         session.generationPlan,
         plannedElementCount,
