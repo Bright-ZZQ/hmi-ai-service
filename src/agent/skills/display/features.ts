@@ -1,9 +1,9 @@
 /**
  * Display 图纸组 — 动态/交互特性工具
  *
- * 动态特性：旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐，写入 store.dynamicDyna。
- * 交互特性：写值 / 打开页面，写入 store.interactiveDyna。
- * 其中旋转/移动/闪烁/变色/数值显示/显隐/写值/打开页面的 toolDef 会被 symbol/features.ts 复用（仅改 group）。
+ * 动态特性：旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐 / 缩放 / 填充 / 流动 / 操作使能 / 多状态文字 / 多状态颜色，写入 store.dynamicDyna。
+ * 交互特性：写值 / 打开页面 / Tip 显示 / 置位，写入 store.interactiveDyna。
+ * 这些特性的 toolDef 会被 symbol/features.ts 复用（仅改 group）。
  */
 
 import type { SkillRegistryEntry } from '../../../types'
@@ -61,7 +61,8 @@ export const ADD_EVENT_DEFINITION: SkillRegistryEntry = {
 - scope=display：图纸级事件，写入 pageProperty.events，用 trigger 指定触发方式：
   respond=事件响应(需 handleId)；schedule=定时执行(scheduleType+time/intervalSeconds/dayOfWeek/dayOfMonth)；valueChanged=数值变化(dataSourceKeys 测点全路径，如 "100:XAM_001.AV")；onOpenBefore=画面打开前(仅 script)；onOpenAfter=画面打开后。
 - action 动作：script 脚本(script)；visible 显隐(visible: 0隐藏/1显示/2切换)；move 移动(moveType moveBy|moveTo, x, y)；rotate 旋转(angle, clockwise)；scale 缩放(scaleX, scaleY)；size 尺寸(width, height)；color 变色(textColor/borderColor/backgroundColor 至少一个)；openDialog 弹窗(url,width,height,dialogPosition)；openWindow 新窗口(url)。
-- 除 script/openDialog/openWindow 外，动作作用于 targetElements 指定的图元 id 列表；图元级缺省作用于自身，图纸级必须指定。
+- 动作作用于 targetElements 指定的图元 id 列表；图元级缺省作用于自身（脚本的 data 即为自身）；图纸级必须指定，openDialog/openWindow 除外。
+- 脚本中要使用 data 时必须配置目标图元（图纸级需传 targetElements），否则 data 为 undefined；未配置目标图元的脚本只能用 gv.findNodeByIdEx("图元ID") 操作图元，不得访问 data。
 - 图元级 eventScope=other + handleId：向其他图纸/图纸级“事件响应”广播事件，此时无需 action。
 用户不会提供图元 ID：用 find_elements 定位，不确定则 ask_user，不得猜测。成功后调用 assemble_display 输出完整图纸。
 ${SCRIPT_API_REFERENCE}`,
@@ -159,7 +160,7 @@ export const ADD_FEATURE_VISIBLE: SkillRegistryEntry = {
       name: 'add_feature_visible',
       description: `为图元添加显隐动态特性（Visible）。条件满足时按 isVisible 控制图元显示或隐藏。
 isVisible=1：条件满足显示、不满足隐藏；isVisible=0：条件满足隐藏、不满足显示。
-禁止自行推断条件；用户未明确指定条件时特性持续按 isVisible 生效。存储到 store.dynamicDyna，type 为 GraphDynaVisible。`,
+禁止自行推断条件；用户未明确指定条件时特性持续按 isVisible 生效，因此未指定条件时 isVisible 必须为 1，无条件的 isVisible=0 会让图元永久不可见（会被服务端拒绝）；不要的图元请用 delete_element 删除。存储到 store.dynamicDyna，type 为 GraphDynaVisible。`,
       parameters: {
         type: 'object',
         properties: {
@@ -217,13 +218,13 @@ export const ADD_FEATURE_NUM_DISPLAY: SkillRegistryEntry = {
     function: {
       name: 'add_feature_num_display',
       description: `为图元添加数值显示动态特性（NumDisplay）。将数据源的实时值显示为图元文本，支持显示格式（小数位/数据库格式）、
-对齐方式、工程单位、开关量置0/置1说明、时间格式化，以及质量位无效时闪烁。存储到 store.dynamicDyna，type 为 GraphDynaValDisplay。`,
+对齐方式、工程单位、开关量置0/置1说明、时间格式化（测点时间戳或当前系统时间），以及质量位无效时闪烁。存储到 store.dynamicDyna，type 为 GraphDynaValDisplay。`,
       parameters: {
         type: 'object',
         properties: {
           elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
           ...FEATURE_CONDITION_PROPS,
-          dataSourceKey: { type: 'string', description: '要显示的数值测点全路径（必需），形如 "100:XAM_001.AV"；服务端按最后一个 "." 拆分为 tagName 与 itemName' },
+          dataSourceKey: { type: 'string', description: '要显示的数值测点全路径，形如 "100:XAM_001.AV"；服务端按最后一个 "." 拆分为 tagName 与 itemName。除“显示当前系统时间”(useTime=1 且 parTimeTy=0)外必需' },
           align: { type: 'number', enum: [0, 1, 2, 3], description: '对齐方式：0=左对齐，1=居中，2=右对齐，3=沿用图元自身文本对齐，默认 3' },
           blink: { type: 'number', description: '质量位无效时是否闪烁：0=否，1=是，默认 0' },
           isOfData: { type: 'number', description: '显示格式来源：0=按配置格式（ofShow），1=按数据库格式（ofItem），默认 0' },
@@ -237,11 +238,12 @@ export const ADD_FEATURE_NUM_DISPLAY: SkillRegistryEntry = {
           e1Des: { type: 'string', description: '置1说明文本（showDbE0E1=0 时使用），如 "运行"' },
           e0DesDataSourceKey: { type: 'string', description: '置0说明测点全路径（showDbE0E1=1 时使用），形如 "100:XAM_001.E0"' },
           e1DesDataSourceKey: { type: 'string', description: '置1说明测点全路径（showDbE0E1=1 时使用），形如 "100:XAM_001.E1"' },
-          useTime: { type: 'number', description: '是否将数值按时间戳格式化：0=否，1=是，默认 0' },
+          useTime: { type: 'number', description: '是否按时间格式显示：0=否，1=是，默认 0。配合 parTimeTy 可显示测点时间戳或当前系统时间' },
+          parTimeTy: { type: 'number', enum: [0, 1], description: '时间来源（useTime=1 时有效）：1=测点值时间戳（默认），0=当前系统时间（每秒刷新，此时无需 dataSourceKey）' },
           timeFormat: { type: 'number', enum: [0, 1, 2, 3], description: '时间格式：0=YYYY-MM-DD HH:mm:ss，1=YYYY-MM-DD，2=HH:mm:ss，3=HH:mm:ss.SSS，默认 0（useTime=1 时有效）' },
           not: { type: 'boolean', description: '条件取反，默认 false' },
         },
-        required: ['elementName', 'dataSourceKey'],
+        required: ['elementName'],
       },
     },
   },
@@ -419,6 +421,8 @@ export const ADD_FEATURE_ROTATE: SkillRegistryEntry = {
           ...FEATURE_CONDITION_PROPS,
           rotMode: { type: 'number', description: '旋转方式：0=自动旋转（固定角度），1=参数驱动旋转（数据源映射），默认 0' },
           rotCenter: { type: 'number', description: '旋转中心：0=偏移中心，1=左上角，2=左下角，3=右上角，4=右下角，5=中心，6=顶部中心，7=底部中心，8=左侧中心，9=右侧中心，默认 5' },
+          pivotX: { type: 'number', description: '仅图纸：旋转中心的画布绝对 x 坐标。图元视觉中心与包围盒中心不重合时（如 3 叶片扇叶绕轮毂圆心旋转）必须与 pivotY 一起传轮毂圆心，服务端会把旋转中心设为该点' },
+          pivotY: { type: 'number', description: '仅图纸：旋转中心的画布绝对 y 坐标，与 pivotX 配合使用' },
           rotAngle: { type: 'number', description: '自动模式下每秒旋转角度（度/秒），范围 -360~360，默认 5；例如 90 表示每秒旋转 90 度' },
           rotCond: { type: 'number', description: '是否开启条件控制旋转：0=否，1=是，默认 0' },
           condTrue: { type: 'number', description: '条件满足时行为：0=旋转，1=停止，2=保持，默认 0' },
@@ -434,6 +438,285 @@ export const ADD_FEATURE_ROTATE: SkillRegistryEntry = {
           not: { type: 'boolean', description: '条件取反，默认 false' },
         },
         required: ['elementName'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_SCALE: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_scale',
+      description: `为图元添加缩放动态特性（Scale）。将数据源的值按量程线性映射为缩放比例（zoomMin~zoomMax），数据源是必需的。
+zoomMode=0 等比缩放：宽高同比例，使用 dsDataSourceKey/pos/zoomMin/zoomMax 及量程；zoomMode=1 分别缩放：用 hZoom/vZoom 分别开启水平/垂直方向，各自配置 h* / v* 参数。
+缩放比例范围 0~10，zoomMax 必须大于 zoomMin。存储到 store.dynamicDyna，type 为 GraphDynaZoom。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          zoomMode: { type: 'number', enum: [0, 1], description: '缩放方式：0=等比缩放，1=分别缩放（水平/垂直独立），默认 0' },
+          dsDataSourceKey: { type: 'string', description: '等比缩放的驱动测点全路径（zoomMode=0 时必需），形如 "100:XAM_001.AV"' },
+          pos: { type: 'number', enum: [0, 1, 2, 3, 4], description: '等比缩放中心：0=中心，1=上，2=下，3=左，4=右，默认 0' },
+          zoomMin: { type: 'number', description: '最小缩放比例（对应量程下限），默认 1，范围 0~10' },
+          zoomMax: { type: 'number', description: '最大缩放比例（对应量程上限），默认 3，范围 0~10' },
+          useDB: { type: 'number', enum: [0, 1], description: '是否使用数据库量程：0=自定义 mu/md，1=数据库量程，默认 0' },
+          mu: { type: 'number', description: '量程上限（useDB=0 时），默认 100' },
+          md: { type: 'number', description: '量程下限（useDB=0 时），默认 0' },
+          muDataSourceKey: { type: 'string', description: '数据库量程上限测点全路径（useDB=1 时）' },
+          mdDataSourceKey: { type: 'string', description: '数据库量程下限测点全路径（useDB=1 时）' },
+          hZoom: { type: 'number', enum: [0, 1], description: 'zoomMode=1：是否开启水平缩放，默认 1' },
+          hDataSourceKey: { type: 'string', description: 'zoomMode=1：水平缩放驱动测点全路径' },
+          hPos: { type: 'number', enum: [0, 3, 4], description: '水平缩放中心：0=中心，3=左，4=右，默认 0' },
+          hZoomMin: { type: 'number', description: '水平最小缩放比例，默认 1' },
+          hZoomMax: { type: 'number', description: '水平最大缩放比例，默认 3' },
+          hUseDB: { type: 'number', enum: [0, 1], description: '水平是否使用数据库量程，默认 0' },
+          hMu: { type: 'number', description: '水平量程上限（hUseDB=0 时），默认 100' },
+          hMd: { type: 'number', description: '水平量程下限（hUseDB=0 时），默认 0' },
+          hMuDataSourceKey: { type: 'string', description: '水平数据库量程上限测点（hUseDB=1 时）' },
+          hMdDataSourceKey: { type: 'string', description: '水平数据库量程下限测点（hUseDB=1 时）' },
+          vZoom: { type: 'number', enum: [0, 1], description: 'zoomMode=1：是否开启垂直缩放，默认 1' },
+          vDataSourceKey: { type: 'string', description: 'zoomMode=1：垂直缩放驱动测点全路径' },
+          vPos: { type: 'number', enum: [0, 1, 2], description: '垂直缩放中心：0=中心，1=上，2=下，默认 0' },
+          vZoomMin: { type: 'number', description: '垂直最小缩放比例，默认 1' },
+          vZoomMax: { type: 'number', description: '垂直最大缩放比例，默认 3' },
+          vUseDB: { type: 'number', enum: [0, 1], description: '垂直是否使用数据库量程，默认 0' },
+          vMu: { type: 'number', description: '垂直量程上限（vUseDB=0 时），默认 100' },
+          vMd: { type: 'number', description: '垂直量程下限（vUseDB=0 时），默认 0' },
+          vMuDataSourceKey: { type: 'string', description: '垂直数据库量程上限测点（vUseDB=1 时）' },
+          vMdDataSourceKey: { type: 'string', description: '垂直数据库量程下限测点（vUseDB=1 时）' },
+          recover: { type: 'number', enum: [0, 1], description: '条件不满足时是否恢复为缩放前的大小：1=是，0=否，默认 0（等比与分别缩放均有效）' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_FILL: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_fill',
+      description: `为图元添加填充动态特性（Fill）。按数据源值在量程内的比例，以 fillClr 颜色按 fillDir 方向填充图元（如液位、进度条、储罐液面），数据源是必需的。
+填充比例范围由 minFill~maxFill（0~100%）对应量程下限~上限。存储到 store.dynamicDyna，type 为 GraphDynaFillColor。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          dsDataSourceKey: { type: 'string', description: '驱动填充的测点全路径（必需），形如 "100:XAM_001.AV"' },
+          fillDir: { type: 'number', enum: [0, 1, 2, 3], description: '填充方向：0=从上到下，1=从下到上，2=从左到右，3=从右到左，默认 1' },
+          fillClr: { type: 'string', description: '填充颜色，默认 rgb(0, 0, 0)' },
+          fillGra: { type: 'string', description: '填充渐变模式，默认空（无渐变）；仅图纸图元支持' },
+          fillGraClr: { type: 'string', description: '填充渐变色，默认 rgb(255, 255, 255)' },
+          minFill: { type: 'number', description: '最小填充比例 0~100（对应量程下限），默认 0' },
+          maxFill: { type: 'number', description: '最大填充比例 0~100（对应量程上限），默认 100' },
+          useDB: { type: 'number', enum: [0, 1], description: '是否使用数据库量程：0=自定义 mu/md，1=数据库量程，默认 0' },
+          mu: { type: 'number', description: '量程上限（useDB=0 时），默认 100' },
+          md: { type: 'number', description: '量程下限（useDB=0 时），默认 0' },
+          muDataSourceKey: { type: 'string', description: '数据库量程上限测点全路径（useDB=1 时）' },
+          mdDataSourceKey: { type: 'string', description: '数据库量程下限测点全路径（useDB=1 时）' },
+          reSet: { type: 'number', enum: [0, 1], description: '条件不满足时是否恢复为未填充：1=是，0=否，默认 0' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName', 'dsDataSourceKey'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_DASH_FLOW: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_dash_flow',
+      description: `为线条/折线/管道等线形图元添加流动动态特性（DashFlow），沿路径呈现流体流动动画。条件满足时流动。
+flowGroupType=background 为背景色块流动，particle 为粒子流动。存储到 store.dynamicDyna，type 为 GraphDynaDashFlow。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          flowDirection: { type: 'number', enum: [0, 1], description: '流动方向：0=正向，1=反向，默认 0' },
+          flowSpeed: { type: 'number', enum: [10, 7, 5, 3, 1], description: '流动速度：10=极快，7=快，5=中速，3=慢，1=极慢，默认 5' },
+          flowGroupType: { type: 'string', enum: ['background', 'particle'], description: '流动样式：background=背景色，particle=粒子，默认 background' },
+          flowGroupColor: { type: 'string', description: '流动元素/粒子颜色，默认 #F3F77E' },
+          flowGroupNum: { type: 'number', description: '流动组个数 0~100（background），默认 1' },
+          flowGroupCount: { type: 'number', description: '每组流动元素数量 0~100（background），默认 10' },
+          flowGroupGap: { type: 'number', description: '流动元素间距 0~100（background），默认 3.5' },
+          flowGroupMax: { type: 'number', description: '元素最大尺寸 0~100（background），默认 7' },
+          flowGroupMin: { type: 'number', description: '元素最小尺寸 0~100（background），默认 0' },
+          keepDirection: { type: 'number', enum: [0, 1], description: '是否保持路径方向（background），默认 0' },
+          flowAutoreverse: { type: 'number', enum: [0, 1], description: '是否正反交替流动，默认 0' },
+          particleSize: { type: 'number', description: '粒子大小 1~50（particle），默认 10' },
+          particleDensity: { type: 'number', description: '粒子密度 1~10（particle），默认 3' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_OPERATION_ENABLE: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_operation_enable',
+      description: `为图元添加操作使能动态特性（OperationEnable），按条件控制图元的交互操作（写值、打开画面等）是否可用。
+enableType=0 条件满足可操作、不满足不可操作；1 条件满足仅可操作；2 条件满足仅不可操作。必须有用户明确指定的条件才有意义。存储到 store.dynamicDyna，type 为 GraphDynaEnableEvent。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          enableType: { type: 'number', enum: [0, 1, 2], description: '使能类型：0=条件满足可操作且不满足不可操作，1=条件满足仅可操作，2=条件满足仅不可操作，默认 0' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName'],
+      },
+    },
+  },
+}
+
+const MULTI_STATE_CONDITION_PROPS = {
+  dataSourceKey: { type: 'string', description: '该状态的条件测点全路径（必需），形如 "100:XAM_001.AV"，必须来自用户请求' },
+  conditionOperator: { type: 'number', description: '比较运算符：0=, 1=!=, 2=>, 3=<, 4=>=, 5=<=，默认 0' },
+  conditionValue: { type: 'string', description: '比较值，必须来自用户请求' },
+} as const
+
+export const ADD_FEATURE_MULTISTATE_TEXT: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_multistate_text',
+      description: `为文字图元添加多状态文字动态特性（MultiStateText）。按 states 顺序判断每个状态的条件，条件满足时显示对应文字，如“值=0 显示停止，值=1 显示运行”。
+状态及其条件必须来自用户的明确描述，禁止自行推断。存储到 store.dynamicDyna，type 为 GraphDynaChangeStringMul。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标文字图元名称（node_id 或 name）' },
+          states: {
+            type: 'array',
+            description: '状态列表，至少 1 个',
+            items: {
+              type: 'object',
+              properties: {
+                ...MULTI_STATE_CONDITION_PROPS,
+                text: { type: 'string', description: '条件满足时显示的文字' },
+              },
+              required: ['dataSourceKey', 'conditionValue', 'text'],
+            },
+          },
+        },
+        required: ['elementName', 'states'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_MULTISTATE_COLOR: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_multistate_color',
+      description: `为图元添加多状态颜色动态特性（MultiStateColor）。按 states 顺序判断每个状态的条件，条件满足时把颜色应用到图元，如“值=0 灰色，值=1 绿色，值=2 红色”。
+通过 isFullClr/isFrameClr/isTextClr 选择改变填充色、边框色、文字色，三者都不传时默认改变填充色。
+状态及其条件必须来自用户的明确描述，禁止自行推断。存储到 store.dynamicDyna，type 为 GraphDynaChangeClrMul。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          states: {
+            type: 'array',
+            description: '状态列表，至少 1 个',
+            items: {
+              type: 'object',
+              properties: {
+                ...MULTI_STATE_CONDITION_PROPS,
+                color: { type: 'string', description: '条件满足时的颜色（rgb/rgba/hex），如 #00ff00' },
+              },
+              required: ['dataSourceKey', 'conditionValue', 'color'],
+            },
+          },
+          isFullClr: { type: 'number', enum: [0, 1], description: '是否改变填充色' },
+          isFrameClr: { type: 'number', enum: [0, 1], description: '是否改变边框色' },
+          isTextClr: { type: 'number', enum: [0, 1], description: '是否改变文字色' },
+        },
+        required: ['elementName', 'states'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_TIP_SHOW: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_tip_show',
+      description: `为图元添加 Tip 显示交互特性（TipShow）。鼠标触发事件时在指定位置弹出提示：显示测点值（tipType=0）或静态文本（tipType=1）。
+存储到 store.interactiveDyna，type 为 GraphTriggerTip，使用 act 定义触发事件（默认悬停）。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          ...FEATURE_CONDITION_PROPS,
+          act: { type: 'number', enum: [2, 3, 4, 5, 6, 10, 16, 17], description: '触发事件：2=左键按下，3=左键抬起，4=右键按下，5=右键抬起，6=双击，10=鼠标移动，16=悬停，17=单击，默认 16' },
+          tipType: { type: 'number', enum: [0, 1], description: 'Tip 信息源：0=显示点值，1=显示静态文本，默认 0' },
+          showPos: { type: 'number', enum: [0, 1, 2, 3, 4], description: '显示位置：0=鼠标位置，1=左上，2=左下，3=右上，4=右下，默认 0' },
+          tipDataSourceKey: { type: 'string', description: '要显示的测点全路径（tipType=0 时必需）' },
+          showPercent: { type: 'number', enum: [0, 1], description: '是否显示比例（tipType=0），默认 0' },
+          calculatePercent: { type: 'number', enum: [0, 1], description: '是否按量程计算比例（showPercent=1），默认 0' },
+          muDataSourceKey: { type: 'string', description: '量程上限测点全路径（calculatePercent=1 时）' },
+          mdDataSourceKey: { type: 'string', description: '量程下限测点全路径（calculatePercent=1 时）' },
+          itemNegative: { type: 'number', enum: [0, 1], description: '项值是否取反（showPercent=1），默认 0' },
+          showText: { type: 'string', description: '静态文本内容（tipType=1 时必需）' },
+          not: { type: 'boolean', description: '条件取反，默认 false' },
+        },
+        required: ['elementName'],
+      },
+    },
+  },
+}
+
+export const ADD_FEATURE_RESET: SkillRegistryEntry = {
+  group: 'display',
+  toolDef: {
+    type: 'function',
+    function: {
+      name: 'add_feature_reset',
+      description: `为图元添加置位交互特性（Reset）。用户触发鼠标事件后，对测点输出脉冲或电平（置0/置1），可指定按位置位，并可二次确认。
+outType=1 脉冲输出（pulseType 0=置0脉冲，1=置1脉冲，pulseWidth 脉冲宽度）；outType=0 电平输出（levelType 0=置0电平，1=置1电平）。
+存储到 store.interactiveDyna，type 为 GraphTriggerRegisterReset，使用 act 定义触发事件。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          elementName: { type: 'string', description: '目标图元名称（node_id 或 name）' },
+          dataSourceKey: { type: 'string', description: '要置位的测点全路径（必需），形如 "100:XAM_001.AV"' },
+          act: { type: 'number', enum: [2, 3, 4, 5, 6], description: '触发事件：2=左键按下，3=左键抬起，4=右键按下，5=右键抬起，6=双击，默认 2' },
+          outType: { type: 'number', enum: [0, 1], description: '输出方式：1=脉冲输出，0=电平输出，默认 1' },
+          pulseType: { type: 'number', enum: [0, 1], description: '脉冲输出：0=置0脉冲，1=置1脉冲，默认 0（outType=1 时）' },
+          pulseWidth: { type: 'number', description: '脉冲宽度 0~999（outType=1 时），默认 3' },
+          levelType: { type: 'number', enum: [0, 1], description: '电平输出：0=置0电平，1=置1电平，默认 0（outType=0 时）' },
+          bitEnable: { type: 'number', enum: [0, 1], description: '是否按位置位：0=否，1=是，默认 0' },
+          bitNum: { type: 'number', description: '位号 0~31（bitEnable=1 时），默认 0' },
+          confirmEnable: { type: 'number', enum: [0, 1], description: '是否二次确认：0=否，1=是，默认 0' },
+          confirmDes: { type: 'string', description: '二次确认描述（confirmEnable=1 时）' },
+          confirmPos: { type: 'number', enum: [0, 1, 2, 3, 4, 5, 6], description: '确认框位置：0=鼠标，1=左上，2=右下，3=自定义，4=左下，5=右上，6=居中，默认 0' },
+          posX: { type: 'number', description: '自定义位置 X（confirmPos=3 时），默认 0' },
+          posY: { type: 'number', description: '自定义位置 Y（confirmPos=3 时），默认 0' },
+        },
+        required: ['elementName', 'dataSourceKey'],
       },
     },
   },

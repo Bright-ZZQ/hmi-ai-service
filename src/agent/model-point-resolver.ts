@@ -51,6 +51,11 @@ function collectFeaturePoints(features: unknown, points: PlainObject[], owners: 
   for (const feature of features) {
     if (!isPlainObject(feature)) continue
     collectConditionPoints(feature.conditions, points, owners)
+    if (Array.isArray(feature.multiStateConditions)) {
+      for (const state of feature.multiStateConditions) {
+        if (isPlainObject(state)) collectConditionPoints(state.conditions, points, owners)
+      }
+    }
     if (!isPlainObject(feature.pars)) continue
     for (const par of Object.values(feature.pars)) {
       if (isPlainObject(par) && isPlainObject(par.original) && typeof par.original.tagName === 'string') {

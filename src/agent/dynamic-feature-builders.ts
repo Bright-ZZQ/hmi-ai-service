@@ -12,14 +12,30 @@ type DynamicFeatureToolName =
   | 'add_feature_change_color'
   | 'add_feature_num_display'
   | 'add_feature_visible'
+  | 'add_feature_scale'
+  | 'add_feature_fill'
+  | 'add_feature_dash_flow'
+  | 'add_feature_operation_enable'
+  | 'add_feature_multistate_text'
+  | 'add_feature_multistate_color'
 
 type InteractiveFeatureToolName =
   | 'add_feature_write_value'
   | 'add_feature_open_page'
+  | 'add_feature_tip_show'
+  | 'add_feature_reset'
 
 interface FeatureParam {
   original: unknown
   ref?: string
+}
+
+export interface MultiStateCondition {
+  id: string
+  name: string
+  value: string
+  conditions: Record<string, unknown>[]
+  not: boolean
 }
 
 export interface DynamicFeatureConfig {
@@ -29,6 +45,7 @@ export interface DynamicFeatureConfig {
   conditions: Record<string, unknown>[]
   not: boolean
   pars: Record<string, FeatureParam>
+  multiStateConditions?: MultiStateCondition[]
 }
 
 export interface InteractiveFeatureConfig {
@@ -37,6 +54,8 @@ export interface InteractiveFeatureConfig {
   type: string
   act: number
   pars: Record<string, FeatureParam>
+  conditions?: Record<string, unknown>[]
+  not?: boolean
 }
 
 const DYNAMIC_FEATURE_TYPES: Record<DynamicFeatureToolName, string> = {
@@ -46,11 +65,32 @@ const DYNAMIC_FEATURE_TYPES: Record<DynamicFeatureToolName, string> = {
   add_feature_change_color: 'GraphDynaChangeClr',
   add_feature_num_display: 'GraphDynaValDisplay',
   add_feature_visible: 'GraphDynaVisible',
+  add_feature_scale: 'GraphDynaZoom',
+  add_feature_fill: 'GraphDynaFillColor',
+  add_feature_dash_flow: 'GraphDynaDashFlow',
+  add_feature_operation_enable: 'GraphDynaEnableEvent',
+  add_feature_multistate_text: 'GraphDynaChangeStringMul',
+  add_feature_multistate_color: 'GraphDynaChangeClrMul',
 }
 
 const WRITE_VALUE_DIGITAL = 'GraphTriggerWriteDigVal'
 const WRITE_VALUE_ANALOG = 'GraphTriggerWriteAnaVal'
 const OPEN_PAGE_TYPE = 'GraphTriggerOpenPage'
+const TIP_SHOW_TYPE = 'GraphTriggerTip'
+const RESET_TYPE = 'GraphTriggerRegisterReset'
+
+const INTERACTIVE_ACT = { LEFT_DOWN: 2, HOVER: 16 }
+const TIP_TYPE = { DS_VALUE: 0, STATIC_TEXT: 1 }
+const RESET_OUTPUT = { LEVEL: 0, PULSE: 1 }
+const CONFIRM_POS_CUSTOM = 3
+const SCALE_MODE = { EQUAL: 0, DIFF: 1 }
+const MIN_ZOOM_RATIO = 0
+const MAX_ZOOM_RATIO = 10
+const DASH_FLOW_PARTICLE = 'particle'
+const MAX_MULTI_STATES = 20
+// 数值显示：显示类型（contentTy）与时间来源（parTimeTy），与编辑器 NUM_DISPLAY_PARAMS 一致
+const NUM_DISPLAY_CONTENT_TIME_VALUE = 1
+const NUM_DISPLAY_TIME_TYPE = { CURRENT: 0, DATABASE: 1 }
 
 const ANALOG_WRITE_MODE = { RATIO: 0, FIXED_INCRE: 1, FIXED: 2, INPUT: 3 }
 const DIGITAL_WRITE_MODE = { REVERSE: 0, FIXED: 1 }
@@ -97,19 +137,66 @@ function isConditionSpecifiedByUser(args: Record<string, unknown>): boolean {
   return args.conditionSpecifiedByUser === true
 }
 
-function buildConditions(args: Record<string, unknown>): Record<string, unknown>[] {
-  if (!isConditionSpecifiedByUser(args) || !args.dataSourceKey) return []
+function buildConditionEntry(
+  dataSourceKey: unknown,
+  operator: unknown,
+  rightValue: unknown,
+): Record<string, unknown> {
   // 后端按 leftValue 订阅测点并计算条件，logic 为编辑器校验必填；nodeType 等字段由 model-point-resolver 在组装后补全
-  const leftValue: Record<string, string> = { ...writeDataPoint(args.dataSourceKey), type: 'm' }
-  return [{
+  const leftValue: Record<string, string> = { ...writeDataPoint(dataSourceKey), type: 'm' }
+  return {
     num: globalThis.crypto.randomUUID(),
     leftValue,
-    sign: Number(args.conditionOperator ?? 0),
-    rightValue: { original: String(args.conditionValue ?? '1'), ref: '' },
+    sign: Number(operator ?? 0),
+    rightValue: { original: String(rightValue ?? '1'), ref: '' },
     logicSign: 0,
     logic: leftValue.nodeId,
     conditions: [],
-  }]
+  }
+}
+
+function buildConditions(args: Record<string, unknown>): Record<string, unknown>[] {
+  if (!isConditionSpecifiedByUser(args) || !args.dataSourceKey) return []
+  return [buildConditionEntry(args.dataSourceKey, args.conditionOperator, args.conditionValue)]
+}
+
+const OPERATOR_LABELS = ['=', '!=', '>', '<', '>=', '<=']
+
+interface StateInput {
+  dataSourceKey: string
+  operator: unknown
+  value: unknown
+  payload: string
+}
+
+/** 多状态特性：每个状态一条独立条件，按声明顺序匹配。 */
+function buildMultiStateConditions(
+  args: Record<string, unknown>,
+  payloadKey: 'text' | 'color',
+): MultiStateCondition[] {
+  const states = Array.isArray(args.states) ? args.states : []
+  if (states.length === 0) throw new Error('states 不能为空：至少需要一个“条件 → 显示值”状态')
+  if (states.length > MAX_MULTI_STATES) throw new Error(`states 最多 ${MAX_MULTI_STATES} 个`)
+
+  return states.map((raw, index): MultiStateCondition => {
+    const item = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+    const state: StateInput = {
+      dataSourceKey: typeof item.dataSourceKey === 'string' ? item.dataSourceKey.trim() : '',
+      operator: item.conditionOperator,
+      value: item.conditionValue,
+      payload: typeof item[payloadKey] === 'string' ? (item[payloadKey] as string).trim() : '',
+    }
+    if (!state.dataSourceKey) throw new Error(`states[${index}] 缺少 dataSourceKey（测点全路径）`)
+    if (!state.payload) throw new Error(`states[${index}] 缺少 ${payloadKey}`)
+    const operatorIndex = Number(state.operator ?? 0)
+    return {
+      id: globalThis.crypto.randomUUID(),
+      name: `${state.dataSourceKey} ${OPERATOR_LABELS[operatorIndex] ?? ''} ${String(state.value ?? '1')}`.replace(/\s+/g, ' '),
+      value: state.payload,
+      conditions: [buildConditionEntry(state.dataSourceKey, state.operator, state.value)],
+      not: false,
+    }
+  })
 }
 
 function buildRotatePars(args: Record<string, unknown>): Record<string, FeatureParam> {
@@ -298,12 +385,18 @@ function buildChangeColorPars(args: Record<string, unknown>): Record<string, Fea
 }
 
 function buildNumDisplayPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const useTime = Number(args.useTime ?? 0)
+  const currentTime = useTime === 1 && Number(args.parTimeTy ?? NUM_DISPLAY_TIME_TYPE.DATABASE) === NUM_DISPLAY_TIME_TYPE.CURRENT
+  if (!currentTime && !(typeof args.dataSourceKey === 'string' && args.dataSourceKey.trim())) {
+    throw new Error('数值显示缺少 dataSourceKey；仅“显示当前系统时间”(useTime=1 且 parTimeTy=0)可省略')
+  }
   const pars: Record<string, FeatureParam> = {
+    contentTy: original(NUM_DISPLAY_CONTENT_TIME_VALUE),
     ds: original(modelPoint(args.dataSourceKey)),
     align: original(Number(args.align ?? 3)),
     blink: original(Number(args.blink ?? 0)),
     showE0E1: original(Number(args.showE0E1 ?? 0)),
-    useTime: original(Number(args.useTime ?? 0)),
+    useTime: original(useTime),
     isOfData: original(Number(args.isOfData ?? 0)),
     showUT: original(Number(args.showUT ?? 0)),
   }
@@ -321,6 +414,7 @@ function buildNumDisplayPars(args: Record<string, unknown>): Record<string, Feat
   }
 
   if (Number(args.useTime ?? 0)) {
+    pars.parTimeTy = original(currentTime ? NUM_DISPLAY_TIME_TYPE.CURRENT : NUM_DISPLAY_TIME_TYPE.DATABASE)
     pars.timeFormat = original(Number(args.timeFormat ?? 0))
   }
 
@@ -341,6 +435,129 @@ function buildVisiblePars(args: Record<string, unknown>): Record<string, Feature
   return {
     isVisible: original(Number(args.isVisible ?? 1)),
   }
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return value === undefined || value === null || value === '' || !Number.isFinite(parsed) ? fallback : parsed
+}
+
+function capitalize(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1)
+}
+
+/** 量程参数：useDB=1 取数据库量程上下限测点，否则用自定义 mu/md。 */
+function addRangePars(
+  pars: Record<string, FeatureParam>,
+  args: Record<string, unknown>,
+  prefix: string,
+): void {
+  const name = (base: string) => (prefix ? `${prefix}${capitalize(base)}` : base)
+  const useDB = Number(args[name('useDB')] ?? 0)
+  pars[name('useDB')] = original(useDB)
+  if (useDB) {
+    pars[name('muItem')] = original(dataPoint(args[name('muDataSourceKey')]))
+    pars[name('mdItem')] = original(dataPoint(args[name('mdDataSourceKey')]))
+  } else {
+    pars[name('mu')] = original(numberOr(args[name('mu')], 100))
+    pars[name('md')] = original(numberOr(args[name('md')], 0))
+  }
+}
+
+function buildZoomAxisPars(
+  pars: Record<string, FeatureParam>,
+  args: Record<string, unknown>,
+  prefix: '' | 'h' | 'v',
+): void {
+  const name = (base: string) => (prefix ? `${prefix}${capitalize(base)}` : base)
+  const dsArg = prefix ? `${prefix}DataSourceKey` : 'dsDataSourceKey'
+  let zoomMin = numberOr(args[name('zoomMin')], 1)
+  let zoomMax = numberOr(args[name('zoomMax')], 3)
+  zoomMin = Math.min(Math.max(zoomMin, MIN_ZOOM_RATIO), MAX_ZOOM_RATIO)
+  zoomMax = Math.min(Math.max(zoomMax, MIN_ZOOM_RATIO), MAX_ZOOM_RATIO)
+  if (zoomMax <= zoomMin) {
+    zoomMin = 1
+    zoomMax = 3
+  }
+  pars[name('ds')] = original(dataPoint(args[dsArg]))
+  pars[name('pos')] = original(Number(args[name('pos')] ?? 0))
+  pars[name('zoomMin')] = original(zoomMin)
+  pars[name('zoomMax')] = original(zoomMax)
+  addRangePars(pars, args, prefix)
+}
+
+function buildScalePars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const zoomMode = Number(args.zoomMode ?? SCALE_MODE.EQUAL)
+  const pars: Record<string, FeatureParam> = {
+    zoomMode: original(zoomMode),
+    recover: original(Number(args.recover ?? 0)),
+  }
+  if (zoomMode === SCALE_MODE.EQUAL) {
+    buildZoomAxisPars(pars, args, '')
+    return pars
+  }
+  for (const axis of ['h', 'v'] as const) {
+    const enabled = Number(args[`${axis}Zoom`] ?? 1)
+    pars[`${axis}Zoom`] = original(enabled)
+    if (enabled) buildZoomAxisPars(pars, args, axis)
+  }
+  return pars
+}
+
+function buildFillPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const pars: Record<string, FeatureParam> = {
+    ds: original(dataPoint(args.dsDataSourceKey)),
+    minFill: original(numberOr(args.minFill, 0)),
+    maxFill: original(numberOr(args.maxFill, 100)),
+    fillDir: original(Number(args.fillDir ?? 1)),
+    reSet: original(Number(args.reSet ?? 0)),
+    fillClr: original(String(args.fillClr ?? 'rgb(0, 0, 0)')),
+    fillGraClr: original(String(args.fillGraClr ?? 'rgb(255, 255, 255)')),
+    fillGra: original(String(args.fillGra ?? '')),
+  }
+  addRangePars(pars, args, '')
+  return pars
+}
+
+function buildDashFlowPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const groupType = typeof args.flowGroupType === 'string' ? args.flowGroupType : 'background'
+  const pars: Record<string, FeatureParam> = {
+    flowSpeed: original(Number(args.flowSpeed ?? 5)),
+    flowDirection: original(Number(args.flowDirection ?? 0)),
+    flowAutoreverse: original(Number(args.flowAutoreverse ?? 0)),
+    flowGroupType: original(groupType),
+    flowGroupColor: original(String(args.flowGroupColor ?? '#F3F77E')),
+  }
+  if (groupType === DASH_FLOW_PARTICLE) {
+    pars.particleSize = original(numberOr(args.particleSize, 10))
+    pars.particleDensity = original(numberOr(args.particleDensity, 3))
+    return pars
+  }
+  pars.flowGroupNum = original(numberOr(args.flowGroupNum, 1))
+  pars.flowGroupCount = original(numberOr(args.flowGroupCount, 10))
+  pars.flowGroupGap = original(numberOr(args.flowGroupGap, 3.5))
+  pars.flowGroupMax = original(numberOr(args.flowGroupMax, 7))
+  pars.flowGroupMin = original(numberOr(args.flowGroupMin, 0))
+  pars.keepDirection = original(Number(args.keepDirection ?? 0))
+  return pars
+}
+
+function buildOperationEnablePars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  return { enableType: original(Number(args.enableType ?? 0)) }
+}
+
+function buildMultiStateTextPars(): Record<string, FeatureParam> {
+  return {}
+}
+
+function buildMultiStateColorPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const flags = ['isFullClr', 'isFrameClr', 'isTextClr']
+  const noneSpecified = flags.every(flag => args[flag] === undefined || args[flag] === null)
+  const pars: Record<string, FeatureParam> = {}
+  for (const flag of flags) {
+    pars[flag] = original(noneSpecified && flag === 'isFullClr' ? 1 : Number(args[flag] ?? 0))
+  }
+  return pars
 }
 
 function isAnalogWrite(args: Record<string, unknown>): boolean {
@@ -439,14 +656,73 @@ function buildOpenPagePars(args: Record<string, unknown>): Record<string, Featur
   return pars
 }
 
+function buildTipShowPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const tipType = Number(args.tipType ?? TIP_TYPE.DS_VALUE)
+  const pars: Record<string, FeatureParam> = {
+    tipType: original(tipType),
+    showPos: original(Number(args.showPos ?? 0)),
+  }
+  if (tipType === TIP_TYPE.STATIC_TEXT) {
+    pars.showText = original(String(args.showText ?? ''))
+    return pars
+  }
+
+  const showPercent = Number(args.showPercent ?? 0)
+  pars.ds = original(dataPoint(args.tipDataSourceKey))
+  pars.showPercent = original(showPercent)
+  if (!showPercent) return pars
+
+  const calculatePercent = Number(args.calculatePercent ?? 0)
+  pars.calculatePercent = original(calculatePercent)
+  pars.itemNegative = original(Number(args.itemNegative ?? 0))
+  if (calculatePercent) {
+    pars.muItem = original(dataPoint(args.muDataSourceKey))
+    pars.mdItem = original(dataPoint(args.mdDataSourceKey))
+  }
+  return pars
+}
+
+function buildResetPars(args: Record<string, unknown>): Record<string, FeatureParam> {
+  const outType = Number(args.outType ?? RESET_OUTPUT.PULSE)
+  const bitEnable = Number(args.bitEnable ?? 0)
+  const confirmEnable = Number(args.confirmEnable ?? 0)
+  const pars: Record<string, FeatureParam> = {
+    ds: original(dataPoint(args.dataSourceKey)),
+    outType: original(outType),
+  }
+  if (outType === RESET_OUTPUT.PULSE) {
+    pars.pulseType = original(Number(args.pulseType ?? 0))
+    pars.pulseWidth = original(Math.min(Math.max(numberOr(args.pulseWidth, 3), 0), 999))
+  } else {
+    pars.levelType = original(Number(args.levelType ?? 0))
+  }
+  pars.bitEnable = original(bitEnable)
+  if (bitEnable) pars.bitNum = original(Math.min(Math.max(numberOr(args.bitNum, 0), 0), 31))
+  pars.confirmEnable = original(confirmEnable)
+  if (confirmEnable) {
+    const confirmPos = Number(args.confirmPos ?? 0)
+    pars.confirmDes = original(String(args.confirmDes ?? ''))
+    pars.confirmPos = original(confirmPos)
+    if (confirmPos === CONFIRM_POS_CUSTOM) {
+      pars.posX = original(numberOr(args.posX, 0))
+      pars.posY = original(numberOr(args.posY, 0))
+    }
+  }
+  return pars
+}
+
 export function isDynamicFeatureTool(name: string): name is DynamicFeatureToolName {
   return Object.prototype.hasOwnProperty.call(DYNAMIC_FEATURE_TYPES, name)
 }
 
 export function isInteractiveFeatureTool(name: string): name is InteractiveFeatureToolName {
-  return name === 'add_feature_write_value' || name === 'add_feature_open_page'
+  return name === 'add_feature_write_value'
+    || name === 'add_feature_open_page'
+    || name === 'add_feature_tip_show'
+    || name === 'add_feature_reset'
 }
 
+/** 构建失败（参数不合法）时抛出 Error，由调用方转成工具错误返回给模型。 */
 export function buildDynamicFeature(
   name: DynamicFeatureToolName,
   args: Record<string, unknown>,
@@ -458,9 +734,15 @@ export function buildDynamicFeature(
     add_feature_change_color: buildChangeColorPars,
     add_feature_num_display: buildNumDisplayPars,
     add_feature_visible: buildVisiblePars,
+    add_feature_scale: buildScalePars,
+    add_feature_fill: buildFillPars,
+    add_feature_dash_flow: buildDashFlowPars,
+    add_feature_operation_enable: buildOperationEnablePars,
+    add_feature_multistate_text: buildMultiStateTextPars,
+    add_feature_multistate_color: buildMultiStateColorPars,
   }
   const type = DYNAMIC_FEATURE_TYPES[name]
-  return {
+  const feature: DynamicFeatureConfig = {
     id: globalThis.crypto.randomUUID(),
     name: type,
     type,
@@ -468,12 +750,42 @@ export function buildDynamicFeature(
     not: isConditionSpecifiedByUser(args) ? Boolean(args.not ?? false) : false,
     pars: parsBuilders[name](args),
   }
+  if (name === 'add_feature_multistate_text' || name === 'add_feature_multistate_color') {
+    // 多状态特性的条件全部放在 multiStateConditions，不使用顶层条件
+    feature.conditions = []
+    feature.not = false
+    feature.multiStateConditions = buildMultiStateConditions(
+      args,
+      name === 'add_feature_multistate_text' ? 'text' : 'color',
+    )
+  }
+  return feature
 }
 
 export function buildInteractiveFeature(
   name: InteractiveFeatureToolName,
   args: Record<string, unknown>,
 ): InteractiveFeatureConfig {
+  if (name === 'add_feature_tip_show') {
+    return {
+      id: globalThis.crypto.randomUUID(),
+      name: TIP_SHOW_TYPE,
+      type: TIP_SHOW_TYPE,
+      act: Number(args.act ?? INTERACTIVE_ACT.HOVER),
+      pars: buildTipShowPars(args),
+      conditions: buildConditions(args),
+      not: isConditionSpecifiedByUser(args) ? Boolean(args.not ?? false) : false,
+    }
+  }
+  if (name === 'add_feature_reset') {
+    return {
+      id: globalThis.crypto.randomUUID(),
+      name: RESET_TYPE,
+      type: RESET_TYPE,
+      act: Number(args.act ?? INTERACTIVE_ACT.LEFT_DOWN),
+      pars: buildResetPars(args),
+    }
+  }
   const type = name === 'add_feature_write_value'
     ? (isAnalogWrite(args) ? WRITE_VALUE_ANALOG : WRITE_VALUE_DIGITAL)
     : OPEN_PAGE_TYPE

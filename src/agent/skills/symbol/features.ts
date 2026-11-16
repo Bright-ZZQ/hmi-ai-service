@@ -1,8 +1,8 @@
 /**
  * Symbol 图符组 — 动态/交互特性工具
  *
- * 旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐 / 写值 / 打开页面
- * 同时适用于图纸元素和图符 comp，复用 display 侧的 toolDef，仅将 group 改为 'symbol'。
+ * 旋转 / 移动 / 闪烁 / 变色 / 数值显示 / 显隐 / 缩放 / 填充 / 流动 / 操作使能 / 多状态文字 / 多状态颜色 /
+ * 写值 / 打开页面 / Tip 显示 / 置位，同时适用于图纸元素和图符 comp，复用 display 侧的 toolDef，仅将 group 改为 'symbol'。
  */
 
 import type { SkillRegistryEntry } from '../../../types'
@@ -10,13 +10,61 @@ import { SYMBOL_BINDING_VALUE_TYPES, SYMBOL_FUNC_API_REFERENCE } from '../../scr
 import {
   ADD_FEATURE_BLINK,
   ADD_FEATURE_CHANGE_COLOR,
+  ADD_FEATURE_DASH_FLOW,
+  ADD_FEATURE_FILL,
   ADD_FEATURE_MOVE,
+  ADD_FEATURE_MULTISTATE_COLOR,
+  ADD_FEATURE_MULTISTATE_TEXT,
   ADD_FEATURE_NUM_DISPLAY,
   ADD_FEATURE_OPEN_PAGE,
+  ADD_FEATURE_OPERATION_ENABLE,
+  ADD_FEATURE_RESET,
   ADD_FEATURE_ROTATE,
+  ADD_FEATURE_SCALE,
+  ADD_FEATURE_TIP_SHOW,
   ADD_FEATURE_VISIBLE,
   ADD_FEATURE_WRITE_VALUE,
 } from '../display/features'
+
+export const ADD_FEATURE_SCALE_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_SCALE,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_FILL_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_FILL,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_DASH_FLOW_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_DASH_FLOW,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_OPERATION_ENABLE_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_OPERATION_ENABLE,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_MULTISTATE_TEXT_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_MULTISTATE_TEXT,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_MULTISTATE_COLOR_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_MULTISTATE_COLOR,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_TIP_SHOW_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_TIP_SHOW,
+  group: 'symbol',
+}
+
+export const ADD_FEATURE_RESET_SYMBOL: SkillRegistryEntry = {
+  ...ADD_FEATURE_RESET,
+  group: 'symbol',
+}
 
 export const ADD_FEATURE_ROTATE_SYMBOL: SkillRegistryEntry = {
   ...ADD_FEATURE_ROTATE,
