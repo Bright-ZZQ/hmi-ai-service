@@ -17,8 +17,9 @@ export function buildGenerationPlan(args: Record<string, unknown>): GenerationPl
     && rawCount >= 0
     ? rawCount
     : undefined
+  // 只记录“要用哪些特性工具”，不要求次数：重复条目去重，执行中数量变化无需重新声明计划
   const requiredFeatureTools = Array.isArray(args.requiredFeatureTools)
-    ? args.requiredFeatureTools.filter((name): name is string => typeof name === 'string' && name.length > 0)
+    ? [...new Set(args.requiredFeatureTools.filter((name): name is string => typeof name === 'string' && name.length > 0))]
     : []
 
   return {
@@ -77,35 +78,26 @@ export function validateGenerationPlan(
       + '若实际图元多余或缺失，请用 delete_element / create_* 调整后再组装')
   }
 
+  // 每种计划内的特性工具至少成功执行一次；distinctFeatureTargets 时不同种类的特性须落在互不相同的图元上
+  const requiredTools = [...new Set(plan.requiredFeatureTools)]
   if (!canMatchFeatureExecutions(
-    plan.requiredFeatureTools,
+    requiredTools,
     featureExecutions,
     plan.distinctFeatureTargets,
   )) {
     const base = plan.distinctFeatureTargets
-      ? '动态特性工具未按生成计划完整执行，或未绑定到互不相同的图元'
+      ? '动态特性工具未按生成计划完整执行，或不同种类的特性未绑定到互不相同的图元'
       : '动态特性工具未按生成计划完整执行'
-    errors.push(`${base}。${describeFeatureGap(plan.requiredFeatureTools, featureExecutions)}`
+    errors.push(`${base}。${describeFeatureGap(requiredTools, featureExecutions)}`
       + '请只补调缺少的特性工具（目标须是最终组装结果中的图元），再重新调用 assemble 工具；'
-      + '若计划中的 requiredFeatureTools 与实际需求不符，请先重新调用 declare_generation_plan 修正')
+      + '若计划中的 requiredFeatureTools 列出了实际不需要的工具，请先重新调用 declare_generation_plan 修正')
   }
 
   return errors
 }
 
-function countByTool(names: string[]): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1)
-  return counts
-}
-
 function describeFeatureGap(required: string[], executions: FeatureExecution[]): string {
-  const need = countByTool(required)
-  const done = countByTool(executions.map(execution => execution.toolName))
-  const missing = [...need].flatMap(([tool, count]) => {
-    const lack = count - (done.get(tool) ?? 0)
-    return lack > 0 ? [`${tool} 还缺 ${lack} 次`] : []
-  })
-  const fmt = (counts: Map<string, number>) => [...counts].map(([tool, count]) => `${tool}×${count}`).join('、') || '无'
-  return `计划要求：${fmt(need)}；最终图纸中已有效执行：${fmt(done)}${missing.length ? `；缺少：${missing.join('、')}` : ''}。`
+  const done = new Set(executions.map(execution => execution.toolName))
+  const missing = required.filter(tool => !done.has(tool))
+  return `计划要求使用：${required.join('、') || '无'}；最终图纸中已有效执行：${[...done].join('、') || '无'}${missing.length ? `；缺少：${missing.join('、')}` : ''}。`
 }

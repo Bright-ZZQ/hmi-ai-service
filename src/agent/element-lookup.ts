@@ -17,8 +17,25 @@ export interface ElementBrief {
   position: string
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 图元可被工具引用的全部标识：id / code / key / name，以及 attrs、store 中的同名字段 */
+export function getElementAliases(element: Record<string, unknown>): string[] {
+  const store = isRecord(element.store) ? element.store : {}
+  const attrs = isRecord(element.attrs) ? element.attrs : {}
+  return [
+    element.id, element.code, element.key, element.name,
+    attrs.id, attrs.code, attrs.key, attrs.name,
+    store.id, store.code, store.key, store.name, store.node_id,
+  ]
+    .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+    .map(String)
+}
+
+export function findElementIndex(elements: Record<string, unknown>[], target: string): number {
+  return elements.findIndex(element => getElementAliases(element).includes(target))
 }
 
 /** 解码文字图元的 base64 内容；非合法 base64 时原样返回 */

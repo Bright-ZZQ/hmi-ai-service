@@ -37,11 +37,11 @@ describe('组装与校验健壮性', () => {
     assert.deepEqual(elements[0].store.dynamicDyna, [{ type: 'rotate' }])
   })
 
-  it('计划校验失败信息指出缺少的特性工具', () => {
+  it('计划校验失败信息指出缺少的特性工具种类（不按次数）', () => {
     const plan = { summary: '', requiredFeatureTools: ['a', 'a', 'b'], distinctFeatureTargets: false }
     const [message] = validateGenerationPlan(plan, 0, [{ toolName: 'a', elementKey: 'x' }])
 
-    assert.match(message, /a 还缺 1 次/)
-    assert.match(message, /b 还缺 1 次/)
+    assert.match(message, /缺少：b。/)
+    assert.doesNotMatch(message, /缺少：[^。]*a/)
   })
 })

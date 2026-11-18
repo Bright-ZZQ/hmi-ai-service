@@ -49,7 +49,21 @@ export interface ToolDefinition {
 }
 
 /** 工具分类（治理 / 路由用） */
-export type ToolCategory = 'plan' | 'shape' | 'composite' | 'edit' | 'assembly' | 'feature'
+export type ToolCategory =
+  | 'plan'
+  | 'shape'
+  | 'composite'
+  | 'edit'
+  | 'assembly'
+  | 'feature'
+  /** 批量与重复生成（复制 / 批量特性 / 点表 / 组合） */
+  | 'batch'
+  /** 排版（对齐 / 分布 / 层级 / 适应画布） */
+  | 'layout'
+  /** 检查与调试（特性读写 / 布局检查 / 脚本试跑） */
+  | 'inspect'
+  /** 图纸级设置（图纸属性 / 页面参数） */
+  | 'page'
 
 /** Agent 生命周期阶段 */
 export type AgentPhase = 'plan' | 'create' | 'feature' | 'assemble' | 'edit'
@@ -124,6 +138,14 @@ export interface AgentConfig {
   modelApiRateLimitRetryDelay: number
   /** 单次模型调用的最大输出 token（含推理模型的思考 token，默认 16384） */
   maxTokens?: number
+  /** 附加到每次模型请求体的专有参数，如 {"thinking":{"type":"enabled"}} */
+  extraBody?: Record<string, unknown>
+  /** 思考超额后重试时额外附加的参数，如 {"thinking":{"type":"disabled"}} 关闭思考 */
+  fallbackBody?: Record<string, unknown>
+  /** 方案预览（轻量前置调用）附加的请求体参数，如 {"thinking":{"type":"disabled"}} 关闭思考以便几秒内出结果；不配置则预览沿用模型默认思考 */
+  previewBody?: Record<string, unknown>
+  /** 无正式输出时允许的最大思考长度（字符），超过则提前中断；默认 0 表示不限制 */
+  maxReasoningChars?: number
 }
 
 /** 流式绘制的画布信息 */

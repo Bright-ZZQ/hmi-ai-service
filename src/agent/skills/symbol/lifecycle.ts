@@ -19,15 +19,11 @@ export const ASSEMBLE_SYMBOL: SkillRegistryEntry = {
 调用此工具前，必须先创建所有需要的图符图元（通过 create_symbol_rect、create_symbol_ellipse、create_symbol_text、create_symbol_line、create_symbol_polygon、create_symbol_polyline、create_symbol_arc、create_symbol_chord、create_symbol_pie 等工具）。
 对于未指定尺寸的图元，会自动应用自适应填充布局（单图元铺满、多图元等分/网格排列）。
 此工具会自动：填充 comps 字段、设置 modified 时间戳、配置 store 属性。
-**重要**：compsData 参数无需手动传递，系统会自动使用你之前创建的所有图元。仅在需要手动指定部分图元时才传入。`,
+**重要**：服务端自动使用工作区中的全部图元，只传 symbolName 及需要修改的画布参数，禁止把图元 JSON 作为参数传入（会极其缓慢）；不需要的图元请用 delete_element 删除。`,
       parameters: {
         type: 'object',
         properties: {
           symbolName: { type: 'string', description: '图符名称' },
-          compsData: {
-            type: 'array',
-            description: '之前 create_symbol_* 工具返回的图元 JSON 对象数组',
-          },
           width: { type: 'number', description: '画布宽度(px)，默认 800' },
           height: { type: 'number', description: '画布高度(px)，默认 600' },
           background: { type: 'string', description: '背景色，默认 rgba(255,255,255,1)' },

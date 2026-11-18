@@ -61,6 +61,24 @@ import {
   UPDATE_DISPLAY_ELEMENT,
 } from './skills/display/lifecycle'
 import {
+  BULK_APPLY_FEATURE,
+  CLONE_ELEMENT_GRID,
+  COPY_FEATURES,
+  GROUP_ELEMENTS,
+  IMPORT_POINT_TABLE,
+  UNGROUP_ELEMENTS,
+} from './skills/display/batch'
+import {
+  ALIGN_ELEMENTS,
+  DECLARE_PAGE_PARAMS,
+  DISTRIBUTE_ELEMENTS,
+  FIT_TO_CANVAS,
+  LINT_DISPLAY,
+  SET_PAGE_PROPERTY,
+  SET_Z_ORDER,
+} from './skills/display/layout'
+import { createInspectSkills } from './skills/inspect'
+import {
   CREATE_SYMBOL_ARC,
   CREATE_SYMBOL_CHORD,
   CREATE_SYMBOL_ELLIPSE,
@@ -158,6 +176,24 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   FIND_DISPLAY_ELEMENTS,
   ASK_USER,
 
+  // Display 图纸组 — 批量与重复生成
+  CLONE_ELEMENT_GRID,
+  BULK_APPLY_FEATURE,
+  COPY_FEATURES,
+  IMPORT_POINT_TABLE,
+  GROUP_ELEMENTS,
+  UNGROUP_ELEMENTS,
+
+  // Display 图纸组 — 排版 / 图纸属性 / 页面参数 / 检查
+  ALIGN_ELEMENTS,
+  DISTRIBUTE_ELEMENTS,
+  SET_Z_ORDER,
+  FIT_TO_CANVAS,
+  SET_PAGE_PROPERTY,
+  DECLARE_PAGE_PARAMS,
+  LINT_DISPLAY,
+  ...createInspectSkills('display'),
+
   DECLARE_SYMBOL_GENERATION_PLAN,
 
   // Symbol 图符组 — 图元创建
@@ -194,6 +230,9 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
   UPDATE_SYMBOL_ELEMENT,
   DELETE_SYMBOL_ELEMENT,
 
+  // Symbol 图符组 — 特性读写 / 调试
+  ...createInspectSkills('symbol'),
+
   // Symbol 图符组 — 图符组装
   ASSEMBLE_SYMBOL,
 ]
@@ -203,6 +242,8 @@ const ALL_SKILLS: SkillRegistryEntry[] = [
 // ============================================================
 
 const FEATURE_PHASES: AgentPhase[] = ['feature']
+const BATCH_PHASES: AgentPhase[] = ['create', 'feature', 'edit']
+const INSPECT_PHASES: AgentPhase[] = ['edit', 'assemble']
 
 /**
  * 工具分类表：集中登记每个工具的 category / phases / keywords。
@@ -261,6 +302,33 @@ const SKILL_META: Record<string, SkillMeta> = {
   find_elements: { category: 'edit', phases: ['edit'] },
   ask_user: { category: 'edit', phases: ['edit'] },
 
+  // 批量与重复生成
+  clone_element_grid: { category: 'batch', phases: BATCH_PHASES, keywords: ['复制', '阵列', '网格', '批量', '重复', '克隆', '副本', '多台', '多个', '行列', '相同的', '一样的'] },
+  bulk_apply_feature: { category: 'batch', phases: BATCH_PHASES, keywords: ['批量', '所有', '全部', '每个', '每台', '各个', '分别', '统一', '都加', '都设置'] },
+  copy_features: { category: 'batch', phases: BATCH_PHASES, keywords: ['复制特性', '复制配置', '拷贝', '同样的特性', '相同特性', '同样配置', '沿用', '复制'] },
+  import_point_table: { category: 'batch', phases: BATCH_PHASES, keywords: ['点表', '导入', 'csv', 'CSV', 'Excel', 'excel', '表格', '位号表', '测点表', '清单'] },
+  group_elements: { category: 'batch', phases: BATCH_PHASES, keywords: ['组合', '成组', '打组', '编组'] },
+  ungroup_elements: { category: 'batch', phases: BATCH_PHASES, keywords: ['取消组合', '解组', '拆分组合', '解除组合', '拆组'] },
+
+  // 排版
+  align_elements: { category: 'layout', phases: BATCH_PHASES, keywords: ['对齐', '整齐', '齐平', '居中', '排齐', '排版'] },
+  distribute_elements: { category: 'layout', phases: BATCH_PHASES, keywords: ['等距', '均匀', '平均分布', '间距', '分布', '排版', '整齐'] },
+  set_z_order: { category: 'layout', phases: BATCH_PHASES, keywords: ['置顶', '置底', '置于顶层', '置于底层', '上移', '下移', '层级', '遮挡', '盖住', '被挡', '上层', '下层'] },
+  fit_to_canvas: { category: 'layout', phases: BATCH_PHASES, keywords: ['适应画布', '缩放到', '超出画布', '越界', '超出', '缩小', '放不下', '太大', '整体缩放'] },
+
+  // 图纸级设置
+  set_page_property: { category: 'page', phases: BATCH_PHASES, keywords: ['画布', '背景色', '刷新周期', '适应模式', '图纸属性', '页面属性', '画面大小', '分辨率', '尺寸', '图纸大小', '全屏'] },
+  declare_page_params: { category: 'page', phases: BATCH_PHASES, keywords: ['页面参数', '画面参数', 'TP', 'tp', '入参', '图纸参数', '传参'] },
+
+  // 检查与调试
+  lint_display: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['检查', '校验', '重叠', '越界', '溢出', '对比度', '诊断', '排查', '看不清', '有问题', '审查'] },
+  list_features: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['查看特性', '特性列表', '有哪些特性', '已有特性', '已配置', '当前特性', '查看配置', '列出特性'] },
+  remove_feature: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['删除特性', '去掉特性', '移除特性', '取消特性', '删掉特性', '去掉闪烁', '取消闪烁', '移除事件', '删除事件'] },
+  update_feature: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['修改特性', '调整特性', '改特性', '修改参数', '改测点', '改条件', '修改条件', '调快', '调慢', '改成', '换成'] },
+  get_element_detail: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['详情', '详细', '具体内容', '属性值', '查看图元'] },
+  check_feature_conditions: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['检查条件', '条件有误', '条件检查', '校验条件', '特性检查', '条件是否'] },
+  test_script: { category: 'inspect', phases: INSPECT_PHASES, keywords: ['试跑', '测试脚本', '调试', '脚本报错', '脚本有问题', '验证脚本', '运行脚本', '脚本测试', '试运行'] },
+
   // Symbol — 基础图元
   create_symbol_rect: { category: 'shape', phases: ['create'], keywords: ['矩形', '方块'] },
   create_symbol_ellipse: { category: 'shape', phases: ['create'], keywords: ['椭圆', '圆'] },
@@ -275,7 +343,7 @@ const SKILL_META: Record<string, SkillMeta> = {
 }
 
 /** 工具命名规范：治理约束，新增工具必须遵循 */
-const TOOL_NAME_PATTERN = /^(create_(display|symbol)_[a-z_]+|create_metric_panel|create_equipment|create_chart_panel|add_feature_[a-z_]+|add_event_definition|set_display_script|set_pipe_script|set_symbol_attr_function|find_elements|ask_user|assemble_(display|symbol)|update_element|delete_element|declare_generation_plan)$/
+const TOOL_NAME_PATTERN = /^(create_(display|symbol)_[a-z_]+|create_metric_panel|create_equipment|create_chart_panel|add_feature_[a-z_]+|add_event_definition|set_display_script|set_pipe_script|set_symbol_attr_function|find_elements|ask_user|assemble_(display|symbol)|update_element|delete_element|declare_generation_plan|clone_element_grid|bulk_apply_feature|copy_features|import_point_table|group_elements|ungroup_elements|align_elements|distribute_elements|set_z_order|fit_to_canvas|set_page_property|declare_page_params|lint_display|list_features|remove_feature|update_feature|get_element_detail|check_feature_conditions|test_script)$/
 
 /** 动态意图关键词：由全部特性关键词 + 通用动效词汇聚合，用于按需下发时判定是否需要特性工具 */
 const DYNAMIC_INTENT_KEYWORDS = [
@@ -290,6 +358,10 @@ const DYNAMIC_INTENT_KEYWORDS = [
 function matchesDynamicIntent(prompt: string): boolean {
   if (!prompt) return false
   return DYNAMIC_INTENT_KEYWORDS.some(keyword => prompt.includes(keyword))
+}
+
+function matchesKeywords(prompt: string, keywords: string[] = []): boolean {
+  return Boolean(prompt) && keywords.some(keyword => prompt.includes(keyword))
 }
 
 // ============================================================
@@ -345,6 +417,12 @@ export function selectTools(
           return wantsDynamic
         case 'edit':
           return isEditing
+        // 批量 / 排版 / 检查 / 图纸级设置：编辑已有画布时全部下发，首轮生成仅在用户意图命中关键词时下发
+        case 'batch':
+        case 'layout':
+        case 'inspect':
+        case 'page':
+          return isEditing || matchesKeywords(prompt, meta.keywords)
         default:
           return true
       }
@@ -355,6 +433,30 @@ export function selectTools(
 /** 获取所有已注册的 Skill */
 export function getAllSkills(): SkillRegistryEntry[] {
   return ALL_SKILLS
+}
+
+/** 计划里可能不会逐一列出、但由用户意图明确需要的特性类工具（脚本 / 事件定义） */
+const INTENT_FEATURE_TOOLS = new Set(['add_event_definition', 'set_display_script', 'set_pipe_script', 'set_symbol_attr_function'])
+
+/**
+ * 按轮次收窄下发的工具（减少每轮模型要读的工具说明）：
+ * - 声明生成计划前：不下发特性类工具（参数说明很长；系统提示词已列出全部特性工具的名称与用途，足以完成计划）；
+ * - 声明计划后：只下发计划 requiredFeatureTools 中列出的特性工具，以及用户意图明确需要的脚本 / 事件定义工具。
+ * 其余类别不受影响。模型需要计划外的特性工具时，重新调用 declare_generation_plan 补充即可。
+ */
+export function narrowToolsForRound(
+  tools: ToolDefinition[],
+  options: { prompt?: string, plannedFeatureTools?: string[] } = {},
+): ToolDefinition[] {
+  const { prompt = '', plannedFeatureTools } = options
+  return tools.filter((tool) => {
+    const name = tool.function.name
+    const meta = SKILL_META[name]
+    if (!meta || meta.category !== 'feature') return true
+    if (!plannedFeatureTools) return false
+    if (plannedFeatureTools.includes(name)) return true
+    return INTENT_FEATURE_TOOLS.has(name) && matchesKeywords(prompt, meta.keywords)
+  })
 }
 
 /** 按名称查找 Skill */

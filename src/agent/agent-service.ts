@@ -13,10 +13,10 @@
  * - 模型无需手动传递大型 JSON 对象
  */
 
-import { getAllSkills, isAssemblyTool, lintRegistry, selectTools } from './skill-registry'
+import { getAllSkills, isAssemblyTool, lintRegistry, narrowToolsForRound, selectTools } from './skill-registry'
 import { buildDisplayElement, buildDisplayDocument, buildSymbolDocument, buildSymbolElement, buildMetricPanel, buildEquipment, buildChartPanel, isBackgroundElement } from './element-builders'
 import type { MetricPanelParams, EquipmentParams, ChartPanelParams } from './element-builders'
-import { buildDynamicFeature, buildInteractiveFeature, isDynamicFeatureTool, isInteractiveFeatureTool } from './dynamic-feature-builders'
+import { isDynamicFeatureTool, isInteractiveFeatureTool } from './dynamic-feature-builders'
 import { enrichModelPoints } from './model-point-resolver'
 import { buildGenerationPlan, validateGenerationPlan } from './generation-plan'
 import { countNewElements, omitUnchangedBaseElementErrors, stackNewElementsOnTop } from './edit-context'
@@ -40,9 +40,16 @@ import {
 } from './script-tools'
 import { findDisplayInteractionIssues, normalizeRotatePivots } from './display-integrity'
 import { collectPageParamNames, ensurePageParams } from './page-params'
-import { decodeText, encodeText, findElementBriefs, isEncodedText } from './element-lookup'
+import { decodeText, encodeText, findElementBriefs, findElementIndex, getElementAliases, isEncodedText } from './element-lookup'
 import { decodeHtmlEntities } from './text-entities'
-import type { FeatureExecution, GenerationPlan } from './generation-plan'
+import { ThinkingDigest } from './thinking-digest'
+import { generatePlanPreview } from './plan-preview'
+import { compactToolResult } from './tool-result-compactor'
+import { attachFeatureToElement, prepareFeature } from './feature-attach'
+import { EXTENDED_TOOL_HANDLERS } from './extended-tools'
+import { ensureDeclaredPageParams } from './page-tools'
+import { applyZOrderOps } from './layout-tools'
+import type { SessionState, ToolExecContext, ToolHandler } from './tool-context'
 import { validateOutput, formatErrors } from './schema-validator'
 import type {
   EditorType,
@@ -55,7 +62,6 @@ import type {
   StreamCanvas,
   StreamMetrics,
   AgentContext,
-  AgentQuestion,
 } from '../types'
 
 // ============================================================
@@ -66,16 +72,23 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 
 你的任务是根据用户的自然语言描述，使用提供的工具函数来生成图纸（Display）或图符（Symbol）的完整 JSON 数据。
 
+## 输出要求（强制，控制思考与输出长度）
+
+- 可以充分思考，把方案想清楚，但思考结束必须落到行动：定好整体分区与数量后就调用工具；能一次调用解决的（clone_element_grid、bulk_apply_feature、复合组件）不要拆成多次推演。
+- 思考时的输出约定：每当确定一个关键决策（整体布局与分区、对象与特性的对应、遇到歧义时的取舍、重要的技术选择），单独起一行，以“【结论】”开头，用一句话（不超过 50 字）写清楚；其余推演照常写，不必加标记。这些结论行会实时展示给用户，其余思考内容不展示。
+- 第一轮调用工具前，先用不超过 4 行文字输出“关键分析”（布局分区、对象与特性的对应关系、需要用户注意的约束），随后立即调用 declare_generation_plan 与创建工具；之后不要再复述计划或逐步解说，每轮最多一句进度说明。
+
 ## 工作流程
 
 1. 分析用户需求，首先调用 \`declare_generation_plan\` 声明可验证的数量与特性要求
 2. 依次调用 create_display_* 或 create_symbol_* 工具创建每个图元
 3. 用户要求动态效果时，在目标图元创建后调用对应的 add_feature_* 工具
 4. 所有图元和特性创建完毕后，调用 assemble_display 或 assemble_symbol 组装成完整的图纸/图符 JSON
-5. 组装工具会自动使用你创建的所有图元，无需手动指定 elementsData 参数（除非你有特殊需求）
+5. 组装工具会自动使用工作区中的全部图元，只传图纸/图符名称与需要修改的画布参数，禁止把图元 JSON 作为参数传入（会让输出极其缓慢，看起来像卡住）
 
 ## 动态特性
 
+- **特性工具按计划下发**：声明生成计划前不提供特性工具的参数说明；请在 \`declare_generation_plan\` 的 requiredFeatureTools 中列出要用的特性工具种类（含 add_event_definition，每种列一次，不必计数），之后的轮次只提供这些特性工具。特性使用次数变化不需要重新声明计划；只有要用计划外的特性种类时，才重新调用 declare_generation_plan 补充。
 - 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`，数值显示 → \`add_feature_num_display\`，显隐 → \`add_feature_visible\`。
 - 缩放（数值驱动比例缩放） → \`add_feature_scale\`，填充（液位/进度，按比例填充） → \`add_feature_fill\`，流动（线/管道流动动画） → \`add_feature_dash_flow\`，操作使能（条件控制能否操作） → \`add_feature_operation_enable\`。
 - 多状态文字 → \`add_feature_multistate_text\`，多状态颜色 → \`add_feature_multistate_color\`：每个状态自带“测点 + 运算符 + 比较值”条件，状态条件必须来自用户明确描述（\`states\`），缩放/填充需要驱动测点 \`dsDataSourceKey\`。
@@ -107,6 +120,17 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 脚本里用 gv.setPageParamsEx/getPageParamsEx 保存启停等状态时，参数名必须是字符串字面量，服务端会在组装时自动声明；不要用变量作参数名。启停类脚本的目标图元必须是最终可见的图元，同一按钮不要为同一效果重复配置多条脚本。
 - 写值必须传入要写入的测点 \`dataSourceKey\`；开关量用 \`valueType=digital\`（默认，反转或写 0/1），模拟量用 \`valueType=analog\`。触发事件默认单击。
 - 打开画面必须指定目标：图纸用 \`pageName\`，网页用 \`webPath\`。弹窗打开时设置 \`popType=1\` 并配置位置/尺寸。
+
+## 批量、排版与检查工具（有这些工具时优先使用，不要重复劳动）
+
+- 多个一样的图元/设备（如 8 台泵、3×4 指示灯）：先创建并配置好第一个，再用 \`clone_element_grid\` 按 rows×cols 复制；用 \`replace\` 把特性里的测点按序号换成各自的（如 [{"from":"PUMP1","to":"PUMP{n}"}]）。禁止逐个 create_* 再逐个 add_feature_*。
+- 一批图元用同一种特性 → \`bulk_apply_feature\`（paramsJson 里可用 {n}/{name} 占位）；把一个图元配好的特性复制到别的图元 → \`copy_features\`（先 \`list_features\` 看有哪些）。
+- 用户给了点表（CSV/JSON：位号、描述、单位…）→ \`import_point_table\` 一次生成“名称 + 实时值 + 单位”并绑定测点；需要自定义样式时传 templateTarget。
+- 对齐/等距/层级/越界：\`align_elements\`、\`distribute_elements\`、\`set_z_order\`、\`fit_to_canvas\`；多个图元需要整体移动或复制时先 \`group_elements\`。不要用 update_element 手工逐个改坐标。
+- 画布尺寸/背景色/刷新周期/适应模式 → \`set_page_property\`；需要指定类型或 TP 的页面参数 → \`declare_page_params\`（脚本里字面量引用的参数无需声明，会自动补）。
+- 修改或删除已有特性：先 \`list_features\` 取 id/序号，再用 \`update_feature\` / \`remove_feature\`；需要看某个图元的具体字段用 \`get_element_detail\`（按 paths 取），不要整份读取画布 JSON。
+- 修改较多后、组装前可调用 \`lint_display\`（布局/交互问题）、\`check_feature_conditions\`（特性条件）自检；写了较复杂的脚本可用 \`test_script\` 在沙箱试跑，按 warnings/error 修正。这些检查工具只读，修改仍用对应的编辑工具。
+- 以上工具修改了画布内容后，同样必须调用 assemble_display / assemble_symbol 输出完整结果。
 
 ## 优先使用复合组件（关键，避免重叠）
 
@@ -194,32 +218,14 @@ function getSystemPrompt(editorType: EditorType): string {
   const target = editorType === 'symbol'
     ? `本次任务必须生成图符（Symbol）。使用 create_symbol_* 创建图元，可按需调用 add_feature_*，最后调用 assemble_symbol；最终 JSON 顶层必须包含 comps，禁止输出 document。`
     : `本次任务必须生成图纸（Display）。使用 create_display_* 创建图元，可按需调用 add_feature_*，最后调用 assemble_display；最终 JSON 顶层必须包含 document，禁止输出 comps。`
-  return `${SYSTEM_PROMPT}\n\n## 本次输出类型（强制）\n\n${target}`
+  return `${SYSTEM_PROMPT}\n\n## 本次输出类型（强制）\n\n${target}\n\n## 思考格式提醒（强制）\n\n你的思考过程中，每确定一个关键决策（布局分区、对象与特性对应、歧义取舍、技术选择），必须另起一行并以“【结论】”开头写一句话（≤50 字），例如：\n【结论】左侧 6 个按钮、右侧 6 个对象按行一一对应\n【结论】风机用三个扇叶多边形，绕轮毂圆心旋转\n这些结论行会实时展示给用户，务必先写出整体方案的结论再开始细节推演。`
 }
 
 // ============================================================
 // 会话状态
 // ============================================================
 
-export interface SessionState {
-  editorType: EditorType
-  workingElements: Record<string, unknown>[]
-  steps: AgentStep[]
-  finalJson?: Record<string, unknown>
-  currentJson?: Record<string, unknown>
-  generationPlan?: GenerationPlan
-  featureExecutions: FeatureExecution[]
-  /** 本轮新增的图纸级事件定义，assemble_display 时并入 pageProperty.events */
-  displayEvents: Record<string, unknown>[]
-  /** 本轮设置的图纸脚本，assemble_display 时写入 pageProperty.scriptFunc */
-  displayScript?: { script: string, replace: boolean }
-  /** 本轮新增的图符数据绑定声明，assemble_symbol 时并入 dataBindings */
-  symbolDataBindings: Record<string, unknown>[]
-  /** 目标不明确时向用户的提问，设置后本轮结束 */
-  question?: AgentQuestion
-  /** 流式绘制用的画布信息；最终以 assemble 结果为准 */
-  canvas: StreamCanvas
-}
+export type { SessionState }
 
 const DEFAULT_DISPLAY_CANVAS: StreamCanvas = {
   name: 'AI生成图纸',
@@ -279,6 +285,9 @@ export function createSession(editorType: EditorType, currentJson?: Record<strin
     featureExecutions: [],
     displayEvents: [],
     symbolDataBindings: [],
+    pageProperty: {},
+    pageParamDecls: [],
+    zOrderOps: [],
     canvas: getCanvasFromJson(editorType, currentJson),
   }
 }
@@ -300,22 +309,6 @@ function mergeElement(
       : value
   }
   return result
-}
-
-function getElementAliases(element: Record<string, unknown>): string[] {
-  const store = isPlainObject(element.store) ? element.store : {}
-  const attrs = isPlainObject(element.attrs) ? element.attrs : {}
-  return [
-    element.id, element.code, element.key, element.name,
-    attrs.id, attrs.code, attrs.key, attrs.name,
-    store.id, store.code, store.key, store.name, store.node_id,
-  ]
-    .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
-    .map(String)
-}
-
-function findElementIndex(elements: Record<string, unknown>[], target: string): number {
-  return elements.findIndex(element => getElementAliases(element).includes(target))
 }
 
 function getInvalidSizeError(element: Record<string, unknown>): string | undefined {
@@ -367,13 +360,6 @@ function ensureEncodedTexts(elements: Record<string, unknown>[]): Record<string,
   })
 }
 
-function getElementFillColor(element: Record<string, unknown>): string | undefined {
-  const fillColor = isPlainObject(element.fillColor) ? element.fillColor : undefined
-  if (typeof fillColor?.startColor === 'string') return fillColor.startColor
-  const attrs = isPlainObject(element.attrs) ? element.attrs : undefined
-  return typeof attrs?.fill === 'string' ? attrs.fill : undefined
-}
-
 // ============================================================
 // 工具执行
 // ============================================================
@@ -411,16 +397,6 @@ const TOOL_TO_SYMBOL_TYPE: Record<string, string> = {
 // ============================================================
 // 工具执行分发（P1：注册表驱动的 name → handler 查表）
 // ============================================================
-
-interface ToolExecContext {
-  name: string
-  args: Record<string, unknown>
-  session: SessionState
-  onStep: (step: AgentStep) => void
-  emit: (event: SSEEvent) => void
-}
-
-type ToolHandler = (ctx: ToolExecContext) => string
 
 // 只有整批都是全画布底板时才下沉，避免复合组件的混合批次被误判
 function emitElements(
@@ -678,15 +654,19 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   const baseDocument = session.currentJson?.document as Record<string, unknown> | undefined
   const basePageProperty = baseDocument?.pageProperty as Record<string, unknown> | undefined
   // 编辑已有图纸时，新增图元叠放在已有图元之上，已有图元的层级保持不变
+  const baseElements = getElementsFromJson('display', session.currentJson)
+  const baseIds = new Set(baseElements.map(element => element.id).filter(Boolean))
+  // 以已有图元的当前层级（可能被拆分组合等操作调整过）作为叠放基准
+  const survivingBase = effectiveElements.filter(element => baseIds.has(element.id))
   const finalElements = baseDocument
-    ? stackNewElementsOnTop(effectiveElements, getElementsFromJson('display', session.currentJson))
+    ? stackNewElementsOnTop(effectiveElements, survivingBase)
     : effectiveElements
   const document: Record<string, unknown> = buildDisplayDocument({
     pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
     elementsData: finalElements,
-    pageWidth: (args.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
-    pageHeight: (args.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
-    bgColor: (args.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),
+    pageWidth: (args.pageWidth as number | undefined) ?? (session.pageProperty.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
+    pageHeight: (args.pageHeight as number | undefined) ?? (session.pageProperty.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
+    bgColor: (args.bgColor as string | undefined) ?? (session.pageProperty.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),
     author: (args.author as string | undefined) ?? (baseDocument?.author as string | undefined),
     company: (args.company as string | undefined) ?? (baseDocument?.company as string | undefined),
     desc: (args.desc as string | undefined) ?? (baseDocument?.desc as string | undefined),
@@ -700,6 +680,14 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   if (typeof basePageProperty?.latestIndex === 'number' && basePageProperty.latestIndex > Number(pageProperty.latestIndex)) {
     pageProperty.latestIndex = basePageProperty.latestIndex
   }
+  // set_page_property 设置的其余属性（适应模式、刷新周期等）覆盖到图纸属性；尺寸与背景以上面的最终取值为准
+  Object.assign(pageProperty, session.pageProperty, {
+    pageWidth: generatedPageProperty.pageWidth,
+    pageHeight: generatedPageProperty.pageHeight,
+    width: generatedPageProperty.width,
+    height: generatedPageProperty.height,
+    bgColor: generatedPageProperty.bgColor,
+  })
   if (session.displayEvents.length > 0) {
     const baseEvents = Array.isArray(basePageProperty?.events) ? basePageProperty.events : []
     pageProperty.events = [...baseEvents, ...session.displayEvents]
@@ -729,9 +717,11 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   // 脚本以字面量引用的页面参数必须已声明，否则运行时 setPageParamsEx 无效、getPageParamsEx 返回 undefined
   const finalDocument = document.document as Record<string, unknown>
   finalDocument.pageParams = ensurePageParams(
-    finalDocument.pageParams,
+    ensureDeclaredPageParams(finalDocument.pageParams, session.pageParamDecls),
     collectPageParamNames([finalDocument.elements, finalDocument.pageProperty]),
   )
+
+  if (session.zOrderOps.length > 0) finalDocument.elements = applyZOrderOps(finalDocument.elements as Record<string, unknown>[], session.zOrderOps)
 
   session.finalJson = document
   session.canvas = getCanvasFromJson('display', document)
@@ -802,19 +792,6 @@ function handleAssembleSymbol({ name, args, session, onStep, emit }: ToolExecCon
   return JSON.stringify(symbol)
 }
 
-function attachFeatureToElement(
-  element: Record<string, unknown>,
-  storeKey: 'dynamicDyna' | 'interactiveDyna',
-  feature: object,
-): void {
-  const elementStore = isPlainObject(element.store) ? { ...element.store } : {}
-  const existingFeatures = Array.isArray(elementStore[storeKey])
-    ? [...elementStore[storeKey]]
-    : []
-  existingFeatures.push(feature)
-  element.store = { ...elementStore, [storeKey]: existingFeatures }
-}
-
 function resolveFeatureTarget(session: SessionState, args: Record<string, unknown>): {
   target: string
   index: number
@@ -862,39 +839,7 @@ function handleDynamicFeature(ctx: ToolExecContext): string {
   if (!isDynamicFeatureTool(name)) {
     return JSON.stringify({ success: false, error: `动态特性工具尚未实现: ${name}` })
   }
-  const resolved = resolveFeatureTarget(session, args)
-  if ('error' in resolved) {
-    return JSON.stringify({ success: false, error: resolved.error })
-  }
-
-  const { target, element } = resolved
-  if (name === 'add_feature_visible' && Number(args.isVisible ?? 1) === 0 && args.not !== true
-    && !(args.conditionSpecifiedByUser === true && args.dataSourceKey)) {
-    return JSON.stringify({
-      success: false,
-      error: '无条件的 isVisible=0 会让图元永久不可见，已拒绝。不要的图元请用 delete_element 删除；'
-        + '仅当用户明确指定了触发条件时才能配置“条件满足隐藏”',
-    })
-  }
-  const pivotX = Number(args.pivotX)
-  const pivotY = Number(args.pivotY)
-  const hasPivot = name === 'add_feature_rotate' && session.editorType === 'display'
-    && args.pivotX != null && args.pivotY != null && Number.isFinite(pivotX) && Number.isFinite(pivotY)
-  if (hasPivot) {
-    // 旋转中心落在指定点：写入图元 roatePos，并用“偏移中心”让运行时保留该点
-    element.roatePos = { x: pivotX, y: pivotY }
-  }
-  const featureArgs = name === 'add_feature_blink'
-    ? { ...args, elementFillColor: getElementFillColor(element) }
-    : hasPivot ? { ...args, rotCenter: 0 } : args
-  let feature: ReturnType<typeof buildDynamicFeature>
-  try {
-    feature = buildDynamicFeature(name, featureArgs)
-  } catch (error) {
-    return JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) })
-  }
-  attachFeatureToElement(element, 'dynamicDyna', feature)
-  return finishFeatureAttach(ctx, target, element, feature.type, '动态')
+  return attachFeatureFromArgs(ctx, name, args, session)
 }
 
 // 交互特性（写值 / 打开页面 / Tip 显示 / 置位）
@@ -903,17 +848,27 @@ function handleInteractiveFeature(ctx: ToolExecContext): string {
   if (!isInteractiveFeatureTool(name)) {
     return JSON.stringify({ success: false, error: `交互特性工具尚未实现: ${name}` })
   }
+  return attachFeatureFromArgs(ctx, name, args, session)
+}
+
+function attachFeatureFromArgs(
+  ctx: ToolExecContext,
+  name: string,
+  args: Record<string, unknown>,
+  session: SessionState,
+): string {
   const resolved = resolveFeatureTarget(session, args)
   if ('error' in resolved) {
     return JSON.stringify({ success: false, error: resolved.error })
   }
-
   const { target, element } = resolved
-  const feature = buildInteractiveFeature(name, args)
-  attachFeatureToElement(element, 'interactiveDyna', feature)
-  return finishFeatureAttach(ctx, target, element, feature.type, '交互')
+  const prepared = prepareFeature(name, args, element, session.editorType)
+  if ('error' in prepared) {
+    return JSON.stringify({ success: false, error: prepared.error })
+  }
+  attachFeatureToElement(element, prepared.storeKey, prepared.feature)
+  return finishFeatureAttach(ctx, target, element, prepared.feature.type, prepared.kind)
 }
-
 // 按名称/文字内容检索图元
 function handleFindElements({ args, session }: ToolExecContext): string {
   const keyword = typeof args.keyword === 'string' ? args.keyword : ''
@@ -1167,6 +1122,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   delete_element: handleDeleteElement,
   assemble_display: handleAssembleDisplay,
   assemble_symbol: handleAssembleSymbol,
+  ...EXTENDED_TOOL_HANDLERS,
 }
 
 for (const skill of getAllSkills()) {
@@ -1350,29 +1306,56 @@ export async function runAgentLoop(
   }
   messages.push(...history, { role: 'user', content: prompt })
 
-  let retries = 0
-  let lastValidationErrors = ''
+  // 方案预览：几秒内先把整体方案流式展示给用户，并交给主流程作为已确定的方案
+  let previewStreamed = false
+  const planPreview = await generatePlanPreview(prompt, editorType, config, context, (text) => {
+    if (!previewStreamed) {
+      previewStreamed = true
+      onSSEEvent({ type: 'thinking', content: '📋 整体方案：\n' })
+    }
+    onSSEEvent({ type: 'thinking', content: text })
+  })
+  if (planPreview) {
+    onSSEEvent({ type: 'thinking', content: '\n' })
+    messages.push({
+      role: 'system',
+      content: `已向用户展示的整体方案如下。整体规划已完成，你无需重复规划：思考只需补充实现细节（坐标、参数），随后直接调用工具按方案执行；若发现方案有误可在执行中修正。\n${planPreview}`,
+    })
+  }
 
+  let retries = 0
+  let lengthRetries = 0
+  const MAX_LENGTH_RETRIES = 2
+  let lastValidationErrors = ''
+  let announcedRetries = -1
   // === Agent Loop ===
   while (retries <= maxRetries) {
-    // 进度通知
-    const thinkingStep: AgentStep = {
-      type: 'thinking',
-      content: retries === 0 ? '正在分析需求...' : `正在进行第 ${retries} 次修正...`,
-      timestamp: Date.now(),
+    // 进度通知：只在首轮和每次修正时提示，普通工具轮次不重复刷屏
+    if (retries !== announcedRetries) {
+      announcedRetries = retries
+      const thinkingStep: AgentStep = {
+        type: 'thinking',
+        content: retries === 0 ? '正在分析需求...' : `正在进行第 ${retries} 次修正...`,
+        timestamp: Date.now(),
+      }
+      session.steps.push(thinkingStep)
+      onStep(thinkingStep)
     }
-    session.steps.push(thinkingStep)
-    onStep(thinkingStep)
 
     // 流内派发：模型每吐完一个 tool_call 就立即执行并推送图元，不必等整轮结束
     const streamedResults = new Map<string, string>()
     const baseWorkingElements = structuredClone(session.workingElements)
     const baseToolCalls = toolCalls
     const baseGenerationPlan = session.generationPlan
-    const baseFeatureExecutionCount = session.featureExecutions.length
+    // 删除特性会移除已记录的执行，回滚需整体恢复而不是按长度截断
+    const baseFeatureExecutions = [...session.featureExecutions]
     const baseDisplayEventCount = session.displayEvents.length
     const baseDisplayScript = session.displayScript
     const baseSymbolDataBindings = session.symbolDataBindings
+    const basePageProperty = structuredClone(session.pageProperty)
+    const basePageParamDecls = structuredClone(session.pageParamDecls)
+    const baseZOrderOps = [...session.zOrderOps]
+    const baseCanvas = { ...session.canvas }
     // 流内工具是在读流循环里跑的，会被算进 callModel 的 elapsedMs，需单独记账后扣除
     let streamToolMs = 0
 
@@ -1403,10 +1386,14 @@ export async function runAgentLoop(
         )
         session.finalJson = undefined
         session.generationPlan = baseGenerationPlan
-        session.featureExecutions.length = baseFeatureExecutionCount
+        session.featureExecutions.splice(0, session.featureExecutions.length, ...baseFeatureExecutions)
         session.displayEvents.length = baseDisplayEventCount
         session.displayScript = baseDisplayScript
         session.symbolDataBindings = baseSymbolDataBindings
+        session.pageProperty = structuredClone(basePageProperty)
+        session.pageParamDecls = structuredClone(basePageParamDecls)
+        session.zOrderOps = [...baseZOrderOps]
+        session.canvas = { ...baseCanvas }
         streamedResults.clear()
         toolCalls = baseToolCalls
         onSSEEvent({ type: 'stream_reset' })
@@ -1417,7 +1404,17 @@ export async function runAgentLoop(
     }
 
     // 调用模型 API（流式）
-    const { response, retryCount, elapsedMs } = await callModel(config, messages, tools, onSSEEvent, dispatch)
+    // 因思考超额被截断后重试时，放宽输出上限（有上限，避免网关拒绝）
+    const callConfig = lengthRetries > 0
+      ? { ...config, maxTokens: Math.min((config.maxTokens || 16384) * 2, 65536) }
+      : config
+    // 按轮次收窄工具：计划声明前不发特性工具，声明后只发计划内的特性工具
+    const roundTools = narrowToolsForRound(tools, {
+      prompt,
+      plannedFeatureTools: session.generationPlan?.requiredFeatureTools,
+    })
+    const roundStartedAt = Date.now()
+    const { response, retryCount, elapsedMs } = await callModel(lengthRetries > 0, callConfig, messages, roundTools, onSSEEvent, dispatch)
     modelMs += Math.max(0, elapsedMs - streamToolMs)
     rounds++
     emitMetrics()
@@ -1433,7 +1430,7 @@ export async function runAgentLoop(
     }
 
     const choice = response.choices?.[0]
-    console.log(`[AgentService] round=${rounds} retries=${retries} finish=${choice?.finish_reason} toolCalls=${choice?.message?.tool_calls?.length ?? 0} contentLen=${choice?.message?.content?.length ?? 0}`)
+    console.log(`[AgentService] round=${rounds} retries=${retries} finish=${choice?.finish_reason} toolCalls=${choice?.message?.tool_calls?.length ?? 0} contentLen=${choice?.message?.content?.length ?? 0} tools=${roundTools.length}/${JSON.stringify(roundTools).length} ctx=${JSON.stringify(messages).length} sec=${Math.round((Date.now() - roundStartedAt) / 1000)}`)
     if (!choice) {
       return {
         success: false,
@@ -1470,11 +1467,11 @@ export async function runAgentLoop(
           toolCalls++
         }
 
-        // 添加 tool 结果消息
+        // 添加 tool 结果消息：只回传精简摘要，完整数据留在工作区，避免上下文随轮次膨胀
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: result,
+          content: compactToolResult(tc.function.name, result),
         })
       }
       emitMetrics()
@@ -1619,6 +1616,20 @@ export async function runAgentLoop(
     const assembledFromEmpty = await finishWithAutoAssemble()
     if (assembledFromEmpty) return assembledFromEmpty
 
+    // 推理模型把输出额度全部花在思考上（finish_reason=length）：不是校验失败，单独计数，
+    // 下一次提高输出上限并要求精简思考，避免一次偶发的“想太久”直接耗尽重试次数
+    if (choice.finish_reason === 'length' && lengthRetries < MAX_LENGTH_RETRIES) {
+      lengthRetries++
+      const nudge = toolCalls > 0
+        ? '你上一轮的思考耗尽了输出额度，没有产出任何内容。这次请把思考控制在关键决策上、尽快行动：若图元尚未创建完毕，继续调用 create_* / add_feature_* 工具；若已全部完成，立即调用 assemble 工具输出完整结果。'
+        : '你上一轮的思考耗尽了输出额度，没有产出任何内容。这次请把思考控制在整体方案上（分区、数量、对应关系），不要逐个图元推演坐标，然后立即调用 declare_generation_plan 并开始 create_* 创建图元，边做边调整。'
+      messages.push({ role: 'user', content: nudge })
+      const notice = `模型思考耗尽了输出额度，已放宽额度并提示其聚焦要点后重试（${lengthRetries}/${MAX_LENGTH_RETRIES}）`
+      onSSEEvent({ type: 'retry', content: notice })
+      session.steps.push({ type: 'retry', content: notice, timestamp: Date.now() })
+      continue
+    }
+
     retries++
     // 空回复（常见于推理模型思考耗尽输出额度）：催促其直接行动，否则下一轮仍会原样空转
     if (toolCalls > 0) {
@@ -1669,7 +1680,70 @@ interface StreamDispatch {
   onRollback: () => void
 }
 
+/** 超过该长度（字符）仍无任何正式输出的思考视为失控，提前中断（约 4~5k token） */
+const DEFAULT_MAX_REASONING_CHARS = 0
+
+/** 组装工具只需名称与画布参数，参数超过该长度说明模型在重写全部图元数据 */
+const ASSEMBLE_ARGS_LIMIT = 2000
+const ASSEMBLE_STRING_KEYS = ['pageName', 'symbolName', 'bgColor', 'background', 'author', 'company', 'desc']
+const ASSEMBLE_NUMBER_KEYS = ['pageWidth', 'pageHeight', 'width', 'height']
+/** 超过该时长没有任何可见输出时，推送一次当前进度 */
+const PROGRESS_INTERVAL_MS = 20000
+const PROGRESS_TICK_MS = 5000
+
+/** 只保留 JSON 顶层（第一层对象）里的字符，嵌套的图元数据整段跳过，避免误取图元内部的 width 等同名字段 */
+function topLevelText(raw: string): string {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  let out = ''
+  for (const ch of raw) {
+    if (inString) {
+      if (depth === 1) out += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      if (depth === 1) out += ch
+    } else if (ch === '{' || ch === '[') {
+      depth++
+    } else if (ch === '}' || ch === ']') {
+      depth--
+    } else if (depth === 1) {
+      out += ch
+    }
+  }
+  return out
+}
+
+/** 从被截断的组装参数里只保留名称与画布参数，图元数据一律由服务端工作区提供 */
+export function minimalAssembleArgs(raw: string): string {
+  const text = topLevelText(raw)
+  const args: Record<string, unknown> = {}
+  for (const key of ASSEMBLE_STRING_KEYS) {
+    const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(text)
+    if (match) {
+      try {
+        args[key] = JSON.parse(`"${match[1]}"`)
+      } catch {
+        // 转义不完整时忽略该字段
+      }
+    }
+  }
+  for (const key of ASSEMBLE_NUMBER_KEYS) {
+    const match = new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`).exec(text)
+    if (match) args[key] = Number(match[1])
+  }
+  return JSON.stringify(args)
+}
+
+type StreamPhase = 'waiting' | 'reasoning' | 'content' | 'tool' | 'paused'
+
 async function callModel(
+  reduceThinking: boolean,
   config: AgentConfig,
   messages: AgentMessage[],
   tools: unknown[],
@@ -1688,6 +1762,20 @@ async function callModel(
     }
 
     const attemptStartedAt = Date.now()
+    // 进度提示：模型长时间无可见输出（排队、深度思考、输出很长的工具参数）时，按当前阶段推送一句状态，避免界面看起来卡住
+    const progress = { phase: 'waiting' as StreamPhase, tool: '', toolChars: 0, lastShownAt: attemptStartedAt }
+    const show = (content: string) => {
+      progress.lastShownAt = Date.now()
+      onSSEEvent({ type: 'thinking', content })
+    }
+    const progressTimer = setInterval(() => {
+      const now = Date.now()
+      if (progress.phase === 'paused' || progress.phase === 'content' || now - progress.lastShownAt < PROGRESS_INTERVAL_MS) return
+      const seconds = Math.round((now - attemptStartedAt) / 1000)
+      if (progress.phase === 'waiting') show(`⏳ 等待模型响应（已 ${seconds} 秒）…\n`)
+      else if (progress.phase === 'reasoning') show(`💭 仍在深入分析中（已 ${seconds} 秒）…\n`)
+      else show(`🛠 正在生成 ${progress.tool || '工具'} 的参数（已 ${Math.max(1, Math.round(progress.toolChars / 1024))} KB，${seconds} 秒）…\n`)
+    }, PROGRESS_TICK_MS)
     try {
       const body: Record<string, unknown> = {
         model: config.model,
@@ -1701,6 +1789,8 @@ async function callModel(
         body.tools = tools
         body.tool_choice = 'auto'
       }
+      // 网关/模型专有参数（如 DeepSeek 的 thinking）；思考超额重试时再叠加 fallbackBody（如关闭思考）
+      Object.assign(body, config.extraBody, reduceThinking ? config.fallbackBody : undefined)
 
       const res = await fetch(config.modelApiUrl, {
         method: 'POST',
@@ -1734,6 +1824,7 @@ async function callModel(
             type: 'retry',
             content: `${reason}，将在 ${formatDelay(delay)} 后重试 (${attempt + 1}/${maxRetries})...`,
           })
+          progress.phase = 'paused'
           await sleep(delay)
           continue
         }
@@ -1759,6 +1850,10 @@ async function callModel(
       }>()
       let maxIndex = -1
       let finishReason = ''
+      let reasoningChars = 0
+      const digest = new ThinkingDigest()
+      let thinkingRunaway = false
+      let oversizedAssemble = false
       const flushedIndexes = new Set<number>()
 
       // index 递增说明上一个 tool_call 的分片已经吐完，可以立即派发
@@ -1775,15 +1870,24 @@ async function callModel(
         try {
           dispatch.onToolCall(toolCall)
           dispatched = true
+          progress.lastShownAt = Date.now()
         } catch (error) {
           // 构建异常不是网络问题，不缓存结果即可交回流结束后的统一执行路径，避免误触发模型重试
           console.error('[AgentService] 流内工具执行失败:', error)
         }
       }
 
-      while (true) {
+      streamLoop: while (true) {
         const { done, value } = await reader.read()
         if (done) break
+
+        // 思考预算保护（可选）：还没有任何正式输出 / 工具调用就思考过长，提前中断，由上层按“思考超额”处理
+        const maxReasoningChars = config.maxReasoningChars ?? DEFAULT_MAX_REASONING_CHARS
+        if (maxReasoningChars > 0 && reasoningChars > maxReasoningChars && !accumulatedContent && accumulatedToolCalls.size === 0) {
+          thinkingRunaway = true
+          await reader.cancel().catch(() => undefined)
+          break
+        }
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -1802,10 +1906,20 @@ async function callModel(
             const delta = chunk.choices?.[0]?.delta
             if (!delta) continue
 
+            // 推理模型的思考原文冗长且多为推演草稿，不整段转发：只摘出关键结论实时展示，
+            // 同时统计长度用于（可选的）思考预算保护
+            if (delta.reasoning_content) {
+              const reasoning = String(delta.reasoning_content)
+              reasoningChars += reasoning.length
+              progress.phase = 'reasoning'
+              for (const key of digest.push(reasoning)) show(`💭 ${key}\n`)
+            }
+
             // 文本内容 → 实时转发给前端
             if (delta.content) {
               accumulatedContent += delta.content
-              onSSEEvent({ type: 'thinking', content: delta.content })
+              progress.phase = 'content'
+              show(delta.content)
             }
 
             // 工具调用 → 累积（多段 fragment 按 index 合并）
@@ -1827,6 +1941,17 @@ async function callModel(
                 if (tc.id) existing.id = tc.id
                 if (tc.function?.name) existing.function.name += tc.function.name
                 if (tc.function?.arguments) existing.function.arguments += tc.function.arguments
+                progress.phase = 'tool'
+                progress.tool = existing.function.name
+                progress.toolChars = existing.function.arguments.length
+
+                // 模型把全部图元数据写进组装参数：输出会极其缓慢（看起来卡住），且服务端本就用工作区图元组装。
+                // 立即截断，只保留名称/画布参数，直接组装
+                if (isAssemblyTool(existing.function.name) && existing.function.arguments.length > ASSEMBLE_ARGS_LIMIT) {
+                  existing.function.arguments = minimalAssembleArgs(existing.function.arguments)
+                  oversizedAssemble = true
+                  break streamLoop
+                }
               }
             }
           } catch {
@@ -1836,7 +1961,13 @@ async function callModel(
       }
 
       // 流结束，最后一个 tool_call 也已完整
+      if (oversizedAssemble) {
+        await reader.cancel().catch(() => undefined)
+        console.warn('[AgentService] 组装参数中包含图元数据，已截断并改用工作区图元组装')
+        show('⚡ 直接使用已创建的图元组装（无需重新输出图元数据）\n')
+      }
       flush(maxIndex)
+      for (const key of digest.flush()) show(`💭 ${key}\n`)
 
       // 构建最终响应
       const toolCalls = Array.from(accumulatedToolCalls.values())
@@ -1854,7 +1985,7 @@ async function callModel(
         response: {
           choices: [{
             message,
-            finish_reason: toolCalls.length > 0 ? 'tool_calls' : (finishReason || 'stop'),
+            finish_reason: toolCalls.length > 0 ? 'tool_calls' : (thinkingRunaway ? 'length' : (finishReason || 'stop')),
           }],
         },
         retryCount: attempt,
@@ -1870,10 +2001,13 @@ async function callModel(
           type: 'retry',
           content: `网络连接失败，将在 ${formatDelay(delay)} 后重试 (${attempt + 1}/${maxRetries})...`,
         })
+        progress.phase = 'paused'
         await sleep(delay)
         continue
       }
       return { response: null, retryCount: attempt, elapsedMs }
+    } finally {
+      clearInterval(progressTimer)
     }
   }
 

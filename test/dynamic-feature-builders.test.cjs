@@ -564,33 +564,53 @@ describe('generation plan validation', () => {
     distinctFeatureTargets: true,
   })
 
-  it('accepts arbitrary required tools with multiplicity on distinct targets', () => {
+  it('dedupes required tools: each kind is required once, regardless of how often it is listed', () => {
+    assert.deepEqual(plan.requiredFeatureTools, ['feature_alpha', 'feature_beta'])
     const executions = [
       { toolName: 'feature_alpha', elementKey: 'element-a' },
       { toolName: 'feature_beta', elementKey: 'element-b' },
-      { toolName: 'feature_alpha', elementKey: 'element-c' },
     ]
 
     assert.deepEqual(validateGenerationPlan(plan, 3, executions), [])
   })
 
-  it('rejects count mismatches and incomplete tool execution', () => {
+  it('accepts extra executions beyond the plan', () => {
+    const executions = [
+      { toolName: 'feature_alpha', elementKey: 'element-a' },
+      { toolName: 'feature_alpha', elementKey: 'element-c' },
+      { toolName: 'feature_beta', elementKey: 'element-b' },
+      { toolName: 'feature_gamma', elementKey: 'element-b' },
+    ]
+
+    assert.deepEqual(validateGenerationPlan(plan, 3, executions), [])
+  })
+
+  it('rejects count mismatches and missing tool kinds', () => {
     const errors = validateGenerationPlan(plan, 5, [
       { toolName: 'feature_alpha', elementKey: 'element-a' },
     ])
 
     assert.ok(errors.some(error => error.includes('实际为 5 个')))
-    assert.ok(errors.some(error => error.includes('未按生成计划完整执行')))
+    assert.ok(errors.some(error => error.includes('未按生成计划完整执行') && error.includes('缺少：feature_beta')))
   })
 
-  it('rejects required executions that reuse a target', () => {
+  it('rejects different kinds that can only share one target when distinct targets are required', () => {
+    const executions = [
+      { toolName: 'feature_alpha', elementKey: 'element-a' },
+      { toolName: 'feature_beta', elementKey: 'element-a' },
+    ]
+
+    assert.ok(validateGenerationPlan(plan, 3, executions).some(error => error.includes('互不相同')))
+  })
+
+  it('distinct targets can be satisfied by a later execution of the same kind', () => {
     const executions = [
       { toolName: 'feature_alpha', elementKey: 'element-a' },
       { toolName: 'feature_beta', elementKey: 'element-a' },
       { toolName: 'feature_alpha', elementKey: 'element-c' },
     ]
 
-    assert.ok(validateGenerationPlan(plan, 3, executions).some(error => error.includes('互不相同')))
+    assert.deepEqual(validateGenerationPlan(plan, 3, executions), [])
   })
 
   it('requires every generation to declare a plan', () => {

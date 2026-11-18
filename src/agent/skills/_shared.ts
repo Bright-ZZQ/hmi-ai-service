@@ -57,6 +57,23 @@ export const FEATURE_CONDITION_PROPS = {
 } as const
 
 // ============================================================
+// 可复用参数片段 — 批量选择图元
+// ============================================================
+
+/** 批量工具的目标图元列表；id 精确命中只取该图元，仅按名称命中时取全部同名图元 */
+export const TARGETS_PROP = {
+  type: 'array',
+  items: { type: 'string' },
+  description: '目标图元的 id 或名称列表；名称相同的图元会全部命中。与 filter 同时提供时取并集',
+} as const
+
+/** 批量工具的条件选择器 */
+export const FILTER_PROP = {
+  type: 'string',
+  description: '按条件批量选择图元的 JSON 对象字符串，可含 type（如 "Text"）、nameContains（名称包含）、textContains（文字图元内容包含），多个条件需同时满足，如 {"type":"Ellipse","nameContains":"指示灯"}',
+} as const
+
+// ============================================================
 // 多轮编辑工具工厂（Display / Symbol 共用同一工具名）
 // ============================================================
 
@@ -121,9 +138,9 @@ export function createGenerationPlanSkill(group: EditorType): SkillRegistryEntry
             requiredFeatureTools: {
               type: 'array',
               items: { type: 'string' },
-              description: '必须成功执行的 add_feature_* / add_event_definition 工具名列表；每个条目代表一次特性应用，重复需求需重复填写，无特性则传空数组',
+              description: '本次要用到的 add_feature_* / add_event_definition 工具名，每种只列一次，不需要按使用次数重复；无特性则传空数组。执行中某种特性的使用次数变化无需重新声明计划，只有需要新增计划外的特性种类时才重新声明',
             },
-            distinctFeatureTargets: { type: 'boolean', description: 'requiredFeatureTools 中各次特性应用是否必须绑定到互不相同的图元' },
+            distinctFeatureTargets: { type: 'boolean', description: '不同种类的特性是否必须绑定到互不相同的图元（用户要求“分别配置”时为 true）' },
           },
           required: ['summary', 'requiredFeatureTools', 'distinctFeatureTargets'],
         },

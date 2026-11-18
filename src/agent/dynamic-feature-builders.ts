@@ -118,7 +118,7 @@ function dataPoint(value: unknown): Record<string, string> {
  * 数值显示等特性使用的模型点结构：需同时包含 nodeId / tagName / itemName。
  * 用户提供形如 `100:XAM_001.AV` 的全路径，按最后一个 `.` 拆分为 tagName 与 itemName。
  */
-function modelPoint(value: unknown): Record<string, string> {
+export function modelPoint(value: unknown): Record<string, string> {
   const nodeId = typeof value === 'string' ? value.trim() : ''
   const dotIndex = nodeId.lastIndexOf('.')
   return {
@@ -137,7 +137,7 @@ function isConditionSpecifiedByUser(args: Record<string, unknown>): boolean {
   return args.conditionSpecifiedByUser === true
 }
 
-function buildConditionEntry(
+export function buildConditionEntry(
   dataSourceKey: unknown,
   operator: unknown,
   rightValue: unknown,
@@ -300,7 +300,7 @@ function relativeLuminance(color: [number, number, number, number]): number {
   return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
 }
 
-function contrastRatio(left: string, right: string): number {
+export function contrastRatio(left: string, right: string): number {
   const leftColor = parseColor(left)
   const rightColor = parseColor(right)
   if (!leftColor || !rightColor) {
@@ -312,7 +312,7 @@ function contrastRatio(left: string, right: string): number {
     / (Math.min(leftLuminance, rightLuminance) + 0.05)
 }
 
-function hasVisibleFill(value: unknown): value is string {
+export function hasVisibleFill(value: unknown): value is string {
   if (typeof value !== 'string' || value.trim() === '') return false
   const color = parseColor(value)
   return color ? color[3] > 0 : true
@@ -720,6 +720,21 @@ export function isInteractiveFeatureTool(name: string): name is InteractiveFeatu
     || name === 'add_feature_open_page'
     || name === 'add_feature_tip_show'
     || name === 'add_feature_reset'
+}
+
+const INTERACTIVE_TOOL_BY_TYPE: Record<string, InteractiveFeatureToolName> = {
+  [WRITE_VALUE_DIGITAL]: 'add_feature_write_value',
+  [WRITE_VALUE_ANALOG]: 'add_feature_write_value',
+  [OPEN_PAGE_TYPE]: 'add_feature_open_page',
+  [TIP_SHOW_TYPE]: 'add_feature_tip_show',
+  [RESET_TYPE]: 'add_feature_reset',
+}
+
+/** 特性 type（如 GraphDynaBlink）对应的 add_feature_* 工具名；未知类型返回 undefined */
+export function featureToolNameForType(type: string): string | undefined {
+  const dynamic = (Object.entries(DYNAMIC_FEATURE_TYPES) as Array<[string, string]>)
+    .find(([, featureType]) => featureType === type)
+  return dynamic?.[0] ?? INTERACTIVE_TOOL_BY_TYPE[type]
 }
 
 /** 构建失败（参数不合法）时抛出 Error，由调用方转成工具错误返回给模型。 */
