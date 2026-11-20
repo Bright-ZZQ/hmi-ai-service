@@ -9,6 +9,7 @@ import express from 'express'
 import cors from 'cors'
 import { loadConfig } from './config'
 import aiGenerateRouter from './routes/ai-generate'
+import { createMcpRouter } from './mcp/http'
 
 const config = loadConfig()
 const app = express()
@@ -24,6 +25,11 @@ app.get('/health', (_req, res) => {
 
 // AI 生成路由
 app.use('/api', aiGenerateRouter)
+
+// MCP 入口：/mcp/display、/mcp/symbol；MCP_ENABLED=false 时关闭
+if (process.env.MCP_ENABLED !== 'false') {
+  app.use('/mcp', createMcpRouter())
+}
 
 // 启动
 app.listen(config.port, () => {
