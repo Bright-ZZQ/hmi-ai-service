@@ -57,6 +57,27 @@ export const FEATURE_CONDITION_PROPS = {
 } as const
 
 // ============================================================
+// 可复用参数片段 — 旋转中心
+// ============================================================
+
+/** 创建图元时指定旋转中心（roatePos），用于多个部件绕同一圆心转动 */
+export const SHAPE_PIVOT_PROPS = {
+  pivotX: { type: 'number', description: '可选：旋转中心的画布绝对 x 坐标，默认包围盒中心。该图元要与其他部件绕同一圆心转动（如扇叶绕轮毂、辐条绕轮心）时，与 pivotY 一起传公共圆心' },
+  pivotY: { type: 'number', description: '可选：旋转中心的画布绝对 y 坐标，与 pivotX 配合使用' },
+} as const
+
+/** 脚本类工具设置图元旋转中心：脚本用 setRotationEx 让多个图元绕同一圆心转动时使用 */
+export const ROTATE_PIVOT_PROPS = {
+  rotatePivotX: { type: 'number', description: '可选：脚本要让 rotatePivotElements 绕同一圆心转动时，该圆心的画布绝对 x 坐标（如轮毂圆心）' },
+  rotatePivotY: { type: 'number', description: '可选：公共旋转圆心的画布绝对 y 坐标，与 rotatePivotX 配合使用' },
+  rotatePivotElements: {
+    type: 'array',
+    items: { type: 'string' },
+    description: '可选：需要绕该圆心转动的图元 id/名称列表（如全部扇叶）。服务端把它们的旋转中心设为该圆心，脚本只需对它们调用 setRotationEx(累计角度)',
+  },
+} as const
+
+// ============================================================
 // 可复用参数片段 — 批量选择图元
 // ============================================================
 

@@ -7,7 +7,7 @@
  */
 
 import type { SkillRegistryEntry } from '../../../types'
-import { FEATURE_CONDITION_PROPS } from '../_shared'
+import { FEATURE_CONDITION_PROPS, ROTATE_PIVOT_PROPS } from '../_shared'
 import { ACTION_KINDS, DISPLAY_TRIGGERS, MOUSE_EVENT_TYPES, SCHEDULE_TYPES, SCRIPT_API_REFERENCE } from '../../event-definition'
 import { PAGE_SCRIPT_API_REFERENCE, PIPE_SCRIPT_API_REFERENCE } from '../../script-tools'
 
@@ -60,6 +60,7 @@ export const ADD_EVENT_DEFINITION: SkillRegistryEntry = {
 - scope=element：图元鼠标事件（eventType），写入该图元 store.events，需 elementName（来自 find_elements 的 id）。
 - scope=display：图纸级事件，写入 pageProperty.events，用 trigger 指定触发方式：
   respond=事件响应(需 handleId)；schedule=定时执行(scheduleType+time/intervalSeconds/dayOfWeek/dayOfMonth)；valueChanged=数值变化(dataSourceKeys 测点全路径，如 "100:XAM_001.AV")；onOpenBefore=画面打开前(仅 script)；onOpenAfter=画面打开后。
+- 动作选择：旋转、移动、显隐、缩放、尺寸、变色优先使用对应内置动作（rotate/move/visible/scale/size/color）；持续/条件生效的旋转、移动、显隐应改用 add_feature_* 动态特性。用户提供测点控制效果时，优先 add_feature_* 的测点条件 + 交互特性（写值/置位等），或 trigger=valueChanged 搭配内置动作。仅当内置动作与动态特性都无法实现（如多图元联动、状态切换、绕公共圆心公转、读写页面参数、复杂分支）或用户明确指定脚本时才用 action=script。
 - action 动作：script 脚本(script)；visible 显隐(visible: 0隐藏/1显示/2切换)；move 移动(moveType moveBy|moveTo, x, y)；rotate 旋转(angle, clockwise)；scale 缩放(scaleX, scaleY)；size 尺寸(width, height)；color 变色(textColor/borderColor/backgroundColor 至少一个)；openDialog 弹窗(url,width,height,dialogPosition)；openWindow 新窗口(url)。
 - 动作作用于 targetElements 指定的图元 id 列表；图元级缺省作用于自身（脚本的 data 即为自身）；图纸级必须指定，openDialog/openWindow 除外。
 - 脚本中要使用 data 时必须配置目标图元（图纸级需传 targetElements），否则 data 为 undefined；未配置目标图元的脚本只能用 gv.findNodeByIdEx("图元ID") 操作图元，不得访问 data。
@@ -101,6 +102,7 @@ ${SCRIPT_API_REFERENCE}`,
           url: { type: 'string', description: 'action=openDialog/openWindow 的地址' },
           dialogPosition: { type: 'string', enum: ['center', 'left-top', 'right-top', 'left-bottom', 'right-bottom'], description: 'action=openDialog 弹窗位置，默认 center' },
           params: { type: 'string', description: 'eventScope=other 时随事件发送的参数 JSON 字符串，默认 {}' },
+          ...ROTATE_PIVOT_PROPS,
         },
         required: ['scope'],
       },
@@ -116,6 +118,7 @@ export const SET_DISPLAY_SCRIPT: SkillRegistryEntry = {
       name: 'set_display_script',
       description: `设置图纸脚本（属性栏 - 图纸 - 脚本），写入 pageProperty.scriptFunc，画面加载完成后执行一次，用于画面初始化（如设置初始显隐/颜色/文本、读取页面参数、定时刷新）。
 这是对当前图纸的修改，不得新建图元；不需要 elementName。设置后调用 assemble_display 输出完整图纸。
+旋转、移动、显隐等效果优先用 add_feature_rotate / add_feature_move / add_feature_visible 等动态特性实现，仅在动态特性无法实现时才用脚本。
 需要由用户操作、定时或数值变化触发的逻辑应使用 add_event_definition，而不是本工具。
 ${PAGE_SCRIPT_API_REFERENCE}`,
       parameters: {
@@ -123,6 +126,7 @@ ${PAGE_SCRIPT_API_REFERENCE}`,
         properties: {
           script: { type: 'string', description: '图纸脚本函数体' },
           mode: { type: 'string', enum: ['append', 'replace'], description: 'append=追加到已有脚本之后（默认，保留原脚本）；replace=完全替换已有脚本，仅在用户明确要求修改/替换原脚本时使用' },
+          ...ROTATE_PIVOT_PROPS,
         },
         required: ['script'],
       },

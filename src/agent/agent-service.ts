@@ -46,12 +46,14 @@ import { ThinkingDigest } from './thinking-digest'
 import { generatePlanPreview } from './plan-preview'
 import { compactToolResult } from './tool-result-compactor'
 import { attachFeatureToElement, prepareFeature } from './feature-attach'
+import { readPivotPoint, readRotatePivotRequest } from './rotate-pivot'
+import type { PivotPoint } from './rotate-pivot'
 import { EXTENDED_TOOL_HANDLERS } from './extended-tools'
 import { ensureDeclaredPageParams } from './page-tools'
 import { applyZOrderOps } from './layout-tools'
+import { propagateOverlayEvents } from './overlay-events'
 import type { SessionState, ToolExecContext, ToolHandler } from './tool-context'
 import { validateOutput, formatErrors } from './schema-validator'
-import { propagateOverlayEvents } from './overlay-events'
 import type {
   EditorType,
   AgentMessage,
@@ -92,17 +94,23 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - **特性工具按计划下发**：声明生成计划前不提供特性工具的参数说明；请在 \`declare_generation_plan\` 的 requiredFeatureTools 中列出要用的特性工具种类（含 add_event_definition，每种列一次，不必计数），之后的轮次只提供这些特性工具。特性使用次数变化不需要重新声明计划；只有要用计划外的特性种类时，才重新调用 declare_generation_plan 补充。
 - 旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，闪烁 → \`add_feature_blink\`，变色 → \`add_feature_change_color\`，数值显示 → \`add_feature_num_display\`，显隐 → \`add_feature_visible\`。
 - 缩放（数值驱动比例缩放） → \`add_feature_scale\`，填充（液位/进度，按比例填充） → \`add_feature_fill\`，流动（线/管道流动动画） → \`add_feature_dash_flow\`，操作使能（条件控制能否操作） → \`add_feature_operation_enable\`。
+- 进度条（强制）：优先用 \`add_feature_fill\`；用脚本 setWidthEx/setHeightEx 改条长时，尺寸是以图元中心为基准向两侧伸缩的，必须同时用 setXEx(起点x + 新宽度/2)（纵向 setYEx(底边y - 新高度/2)）固定起点，否则条从中间向两边变长，起点处出现空隙。若用 fill 特性：它按目标图元外框填充，所以填充条图元（如 barFill）的位置和宽高必须与轨道（barBg）完全一致、代表满量程，不得按当前值缩短；其自身填充色用轨道背景色或透明，进度色通过 \`fillClr\` 显式传入，横向条 \`fillDir=2\`、纵向液位 \`fillDir=1\`。否则填充会出现“不从起点开始”的空隙。若改用 \`add_feature_scale\` 做进度条，缩放中心默认在图元中心（条会从中间向两边伸缩），必须设 \`zoomMode=1\`、横向条 \`hPos=3\`（左端固定）+ \`vZoom=0\`，纵向条 \`vPos=2\`（底端固定）+ \`hZoom=0\`，zoomMin=0、zoomMax=1。
 - 多状态文字 → \`add_feature_multistate_text\`，多状态颜色 → \`add_feature_multistate_color\`：每个状态自带“测点 + 运算符 + 比较值”条件，状态条件必须来自用户明确描述（\`states\`），缩放/填充需要驱动测点 \`dsDataSourceKey\`。
 - 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`，Tip 提示 → \`add_feature_tip_show\`，置位（脉冲/电平输出） → \`add_feature_reset\`。
-- 进度条（强制）：优先用 \`add_feature_fill\`；用脚本 setWidthEx/setHeightEx 改条长时，尺寸是以图元中心为基准向两侧伸缩的，必须同时用 setXEx(起点x + 新宽度/2)（纵向 setYEx(底边y - 新高度/2)）固定起点，否则条从中间向两边变长，起点处出现空隙。若用 fill 特性：它按目标图元外框填充，所以填充条图元（如 barFill）的位置和宽高必须与轨道（barBg）完全一致、代表满量程，不得按当前值缩短；其自身填充色用轨道背景色或透明，进度色通过 \`fillClr\` 显式传入，横向条 \`fillDir=2\`、纵向液位 \`fillDir=1\`。否则填充会出现“不从起点开始”的空隙。若改用 \`add_feature_scale\` 做进度条，缩放中心默认在图元中心（条会从中间向两边伸缩），必须设 \`zoomMode=1\`、横向条 \`hPos=3\`（左端固定）+ \`vZoom=0\`，纵向条 \`vPos=2\`（底端固定）+ \`hZoom=0\`，zoomMin=0、zoomMax=1。
 - 事件定义（属性栏 - 控制 - 事件定义）统一用 \`add_event_definition\`，这是对**当前图纸**的修改，不得新建图元：
   - scope=element：图元鼠标事件（单击/双击/移入/离开/悬停/按下/抬起），动作可为脚本、显隐、移动、旋转、缩放、尺寸、变色、弹窗、打开窗口，或向其他图纸发送事件(eventScope=other + handleId)。
   - scope=display：图纸级事件。trigger=respond 事件响应（需 handleId，由图元事件/其他事件广播触发）；schedule 定时执行（间隔/每天/每周/每月）；valueChanged 数值变化（需测点全路径）；onOpenBefore 画面打开前（仅脚本）；onOpenAfter 画面打开后。
   - 一个事件只有一个动作；需要多个动作就多次调用。动作要作用于其他图元时，用 targetElements 传目标图元 id。
+  - 由“底板形状 + 文字”组成的按钮：事件与交互特性只配置在底板上。服务端组装时会自动把底板的鼠标事件/交互特性同步到压在底板上的文字和装饰图元（标题带“跟随…”），点到文字同样生效；不要再手工给文字添加转发事件。
 - 用户不会给图元 ID，而是描述图元名称或文字图元的文字内容（图纸中文字为 base64，\`find_elements\` 已解码）。需要定位图元（事件所属图元、动作目标图元）时先调用 \`find_elements\`；恰好 1 个候选才可继续；0 个或多个候选时必须调用 \`ask_user\` 提问（如“该图元是否在图纸右上方？”“该图元是否在某某图元旁边？”或列出候选让用户选），禁止猜测。用户回答后再次定位。
 - 添加事件定义后，必须调用 assemble_display 返回完整图纸，其他内容保持不变。
+- **旋转、移动、显隐等效果优先用已有动态特性，脚本是最后手段**（强制）：
+  - 持续/条件旋转 → \`add_feature_rotate\`，移动 → \`add_feature_move\`，显隐 → \`add_feature_visible\`，闪烁/变色/缩放/填充/流动 → 对应 add_feature_*；这些都不要写脚本。
+  - 由点击/移入/定时/数值变化触发的一次性旋转、移动、显隐、缩放、尺寸、变色 → \`add_event_definition\` 的内置动作（action=rotate/move/visible/scale/size/color），不要用 action=script。
+  - 只有上述特性与内置动作都无法表达时才用脚本，例如：多部件按状态变量联动启停、绕公共圆心公转、累计/切换状态、需要读写页面参数、复杂条件分支、一个触发里按序执行多个动作。
+  - 选用脚本时，在关键分析里用一句话说明“为何已有特性无法实现”；能拆成“动态特性 + 事件内置动作”组合实现的，就拆开实现。
+  - 用户明确给出了模型点（测点全路径）并用它控制效果时，同样先用“动态特性 + 交互特性”实现，尽量不写脚本：测点决定的旋转/移动/显隐/闪烁/变色/多状态/缩放/填充，用 add_feature_* 并以 \`conditionSpecifiedByUser=true\` 传入 \`dataSourceKey\`/\`conditionOperator\`/\`conditionValue\`（或参数模式的数据源与量程）；点击写值/置位/打开画面/使能控制用 add_feature_write_value、add_feature_reset、add_feature_open_page、add_feature_operation_enable；测点值变化触发的动作用 add_event_definition（scope=display + trigger=valueChanged + dataSourceKeys）搭配内置动作。除非这些确实无法表达，或用户明确要求用脚本，否则不要为测点逻辑写脚本。
 - 脚本类特性（均不新建图元，设置后必须调用 assemble 工具输出完整结果）：
-  - 由“底板形状 + 文字”组成的按钮：事件与交互特性只配置在底板上。服务端组装时会自动把底板的鼠标事件/交互特性同步到压在底板上的文字和装饰图元（标题带“跟随…”），点到文字同样生效；不要再手工给文字添加转发事件。
   - 图纸初始化脚本（画面加载后执行一次）→ \`set_display_script\`；默认追加到原脚本之后，仅用户明确要求替换时才 mode=replace。
   - 管道流动控制脚本 → \`set_pipe_script\`，目标必须是管道图元；脚本必须调用 data.setScriptEnabled(true) 流动组才会显示。
   - 图符（symbol）属性由数据绑定值计算（如“温度超过 80 变红”）→ \`set_symbol_attr_function\`，脚本 return 属性值，读取的绑定名必须在 dataBindings 中声明。
@@ -119,6 +127,7 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 变色时必须至少开启 \`isFullClr\`、\`isFrameClr\`、\`isTextClr\` 中一项，并提供对应颜色。
 - 显隐使用 \`isVisible\`：1=条件满足显示，0=条件满足隐藏。用户未指定条件时特性持续生效，因此无条件的 \`isVisible=0\` 会让图元永久不可见，禁止使用（不要的图元请删除）。
 - 需要旋转的图元（扇叶、风机、转轮等）必须绕与其同轴部件（轮毂等）相同的圆心旋转：图元的包围盒中心与轮毂圆心一致时用默认旋转中心；不一致时（如 3 叶片等奇数叶片多边形，包围盒中心会偏离圆心）调用 \`add_feature_rotate\` 时传 \`pivotX/pivotY\`=轮毂圆心的画布绝对坐标。修改已有图元的 roatePos 时，旋转特性的 rotCenter 必须为 0，服务端组装时会自动校正。
+- 用脚本（如按钮启停、定时）控制多个部件绕同一圆心转动时：创建这些部件时传 \`pivotX/pivotY\`=公共圆心，或在 \`add_event_definition\` / \`set_display_script\` 中传 \`rotatePivotX/rotatePivotY\`=公共圆心与 \`rotatePivotElements\`=这些部件的 id，脚本里只对它们调用 \`setRotationEx(累计角度)\`。\`setXEx/setYEx\` 的坐标是图元旋转中心而不是左上角，禁止用它们配合 Math.cos/Math.sin 手算公转（服务端会拒绝）。
 - 编辑已有图纸时，为已有说明文字补充/改写文字：必须用 \`update_element\` 修改该文字本身（或 \`delete_element\` 删除后再新建），禁止在旧文字原位置再新建一个文字造成重叠；新增文字必须避开所有已有文字。
 - 脚本里用 gv.setPageParamsEx/getPageParamsEx 保存启停等状态时，参数名必须是字符串字面量，服务端会在组装时自动声明；不要用变量作参数名。启停类脚本的目标图元必须是最终可见的图元，同一按钮不要为同一效果重复配置多条脚本。
 - 写值必须传入要写入的测点 \`dataSourceKey\`；开关量用 \`valueType=digital\`（默认，反转或写 0/1），模拟量用 \`valueType=analog\`。触发事件默认单击。
@@ -434,6 +443,10 @@ function handleDeclarePlan({ name, args, session, onStep }: ToolExecContext): st
 // 图元创建工具（create_display_*）
 function handleCreateDisplayElement({ name, args, session, onStep, emit }: ToolExecContext): string {
   const elementType = TOOL_TO_ELEMENT_TYPE[name]
+  const pivot = readPivotPoint(args.pivotX, args.pivotY)
+  if (pivot && 'error' in pivot) {
+    return JSON.stringify({ success: false, error: `${name} 参数不合法：${pivot.error}。该图元未创建，请修正后重新调用` })
+  }
   const element = buildDisplayElement(elementType, args)
   // 缺少/非法的尺寸参数会生成残缺图元，直接拒绝并让模型重新创建，避免污染工作区
   const sizeError = getInvalidSizeError(element)
@@ -443,6 +456,8 @@ function handleCreateDisplayElement({ name, args, session, onStep, emit }: ToolE
       error: `${name} 参数不合法：${sizeError}。该图元未创建，请补全 x/y/width/height 等必填参数后重新调用`,
     })
   }
+  // 与其他部件绕同一圆心转动（扇叶绕轮毂）：旋转中心直接落在公共圆心
+  if (pivot) element.roatePos = pivot
   session.workingElements.push(element)
 
   const step: AgentStep = {
@@ -725,6 +740,8 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   )
 
   if (session.zOrderOps.length > 0) finalDocument.elements = applyZOrderOps(finalDocument.elements as Record<string, unknown>[], session.zOrderOps)
+  // 层级确定后再同步：压在按钮底板上的文字/装饰也要响应底板的点击与悬停
+  finalDocument.elements = propagateOverlayEvents(finalDocument.elements as Record<string, unknown>[])
 
   session.finalJson = document
   session.canvas = getCanvasFromJson('display', document)
@@ -741,8 +758,6 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   onStep(step)
 
   return JSON.stringify(document)
-  // 层级确定后再同步：压在按钮底板上的文字/装饰也要响应底板的点击与悬停
-  finalDocument.elements = propagateOverlayEvents(finalDocument.elements as Record<string, unknown>[])
 }
 
 // 图符组装
@@ -924,12 +939,51 @@ function pickEnum<T extends string>(value: unknown, list: readonly T[], fallback
   return list.includes(value as T) ? (value as T) : fallback
 }
 
+interface ResolvedRotatePivot {
+  pivot: PivotPoint
+  indices: number[]
+}
+
+/** 解析脚本类工具的 rotatePivot* 参数，并把目标图元定位到工作区下标（尚未写入） */
+function resolveRotatePivot(
+  session: SessionState,
+  args: Record<string, unknown>,
+): ResolvedRotatePivot | null | { error: string } {
+  const request = readRotatePivotRequest(args)
+  if (request === null || 'error' in request) return request
+  if (session.editorType !== 'display') return { error: 'rotatePivot* 参数仅适用于图纸' }
+  const indices: number[] = []
+  for (const key of request.targets) {
+    const index = findElementIndex(session.workingElements, key)
+    if (index < 0) return { error: `rotatePivotElements 中的图元 ${key} 不存在，请先创建或用 find_elements 确定` }
+    if (!indices.includes(index)) indices.push(index)
+  }
+  return { pivot: request.pivot, indices }
+}
+
+/** 把目标图元的旋转中心设为公共圆心，脚本中的 setRotationEx 即绕该圆心转动；返回被修改图元的 id */
+function applyRotatePivot(ctx: ToolExecContext, resolved: ResolvedRotatePivot): string[] {
+  return resolved.indices.map((index) => {
+    const element = ctx.session.workingElements[index]
+    element.roatePos = { ...resolved.pivot }
+    const id = getElementNodeId(element)
+    ctx.emit({ type: 'element_patch', patch: { op: 'update', target: id, element } })
+    return id
+  })
+}
+
+function rotatePivotInfo(resolved: ResolvedRotatePivot | null, ids: string[]) {
+  return resolved ? { rotatePivot: { ...resolved.pivot, elements: ids } } : {}
+}
+
 // 事件定义：图元级写入 store.events，图纸级并入 pageProperty.events
 function handleAddEventDefinition(ctx: ToolExecContext): string {
   const { name, args, session, onStep } = ctx
   const isDisplay = args.scope === 'display'
   const title = typeof args.title === 'string' ? args.title.trim().slice(0, 30) : ''
   const action = pickEnum<ActionKind>(args.action, ACTION_KINDS, 'script')
+  const pivot = resolveRotatePivot(session, args)
+  if (pivot && 'error' in pivot) return JSON.stringify({ success: false, error: pivot.error })
 
   // 动作目标图元：targetElements 逐个解析为图元 id
   const nodeIds: string[] = []
@@ -972,6 +1026,7 @@ function handleAddEventDefinition(ctx: ToolExecContext): string {
   if ('error' in event) {
     return JSON.stringify({ success: false, error: `${event.error}，请修正后重新调用` })
   }
+  const pivotIds = pivot ? applyRotatePivot(ctx, pivot) : []
 
   if (!isDisplay && owner) {
     const { target, element } = owner
@@ -979,7 +1034,8 @@ function handleAddEventDefinition(ctx: ToolExecContext): string {
     const events = Array.isArray(elementStore.events) ? [...elementStore.events] : []
     events.push(event)
     element.store = { ...elementStore, events }
-    return finishFeatureAttach(ctx, target, element, `${String(event.type ?? '')} 事件(${action})`, '交互')
+    const result = finishFeatureAttach(ctx, target, element, `${String(event.type ?? '')} 事件(${action})`, '交互')
+    return pivot ? JSON.stringify({ ...JSON.parse(result), ...rotatePivotInfo(pivot, pivotIds) }) : result
   }
 
   session.displayEvents.push(event)
@@ -996,7 +1052,7 @@ function handleAddEventDefinition(ctx: ToolExecContext): string {
   }
   session.steps.push(step)
   onStep(step)
-  return JSON.stringify({ success: true, event })
+  return JSON.stringify({ success: true, event, ...rotatePivotInfo(pivot, pivotIds) })
 }
 
 // 图纸脚本：写入 pageProperty.scriptFunc（assemble_display 时合并）
@@ -1006,6 +1062,9 @@ function handleSetDisplayScript(ctx: ToolExecContext): string {
   if ('error' in prepared) {
     return JSON.stringify({ success: false, error: `${prepared.error}，请修正后重新调用` })
   }
+  const pivot = resolveRotatePivot(session, args)
+  if (pivot && 'error' in pivot) return JSON.stringify({ success: false, error: pivot.error })
+  const pivotIds = pivot ? applyRotatePivot(ctx, pivot) : []
   const replace = args.mode === 'replace'
   const previous = session.displayScript
   session.displayScript = {
@@ -1025,7 +1084,7 @@ function handleSetDisplayScript(ctx: ToolExecContext): string {
   }
   session.steps.push(step)
   onStep(step)
-  return JSON.stringify({ success: true, message: '图纸脚本已设置，请调用 assemble_display 输出完整图纸' })
+  return JSON.stringify({ success: true, message: '图纸脚本已设置，请调用 assemble_display 输出完整图纸', ...rotatePivotInfo(pivot, pivotIds) })
 }
 
 // 管道脚本：写入管道图元 store.pipeScript

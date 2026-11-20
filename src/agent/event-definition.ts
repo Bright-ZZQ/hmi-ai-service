@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { hasDynamicPageParamName } from './page-params'
+import { MANUAL_ORBIT_ERROR, hasManualOrbit } from './rotate-pivot'
 
 export const MOUSE_EVENT_TYPES = [
   'onClick',
@@ -54,7 +55,8 @@ export type ScheduleType = typeof SCHEDULE_TYPES[number]
 export const NODE_SELF = 'node-self'
 
 /** 图元对象（data）可用函数参考 */
-export const NODE_API_REFERENCE = `data：setVisibleEx(bool)/getVisibleEx() 显隐；setXEx/getXEx、setYEx/getYEx 位置；setRotationEx/getRotationEx 旋转；setScaleXEx/getScaleXEx、setScaleYEx/getScaleYEx 缩放；setWidthEx/getWidthEx、setHeightEx/getHeightEx 尺寸；setBackgroundColorEx(color)/getBackgroundColorEx() 背景(填充)色；setBorderColorEx/getBorderColorEx 边框色；setTextColorEx/getTextColorEx 文本色；setTextEx(text)/getTextEx() 文本内容(仅文本图元)；getAttr(attr)/setAttr(attr,value) 通用属性；getChildrenEx() 子图元；getShapeEx() 图元类型。`
+export const NODE_API_REFERENCE = `data：setVisibleEx(bool)/getVisibleEx() 显隐；setXEx/getXEx、setYEx/getYEx 图元旋转中心（roatePos，默认为包围盒中心）的画布绝对坐标，不是左上角，set 时图元整体平移；setRotationEx(角度)/getRotationEx 让图元绕自身旋转中心转到该绝对角度（度）；setScaleXEx/getScaleXEx、setScaleYEx/getScaleYEx 缩放；setWidthEx/getWidthEx、setHeightEx/getHeightEx 尺寸（以图元中心为基准向两侧伸缩，左/上边不会固定；做进度条/液位条时必须同步调 setXEx/setYEx，使条的起点固定：横向条 setXEx(起点x + 新宽度/2)，纵向条 setYEx(底边y - 新高度/2)，否则条会从中间向两边变长，起点处出现空隙）；setBackgroundColorEx(color)/getBackgroundColorEx() 背景(填充)色；setBorderColorEx/getBorderColorEx 边框色；setTextColorEx/getTextColorEx 文本色；setTextEx(text)/getTextEx() 文本内容(仅文本图元)；getAttr(attr)/setAttr(attr,value) 通用属性；getChildrenEx() 子图元；getShapeEx() 图元类型。
+多个图元绕同一圆心转动（如扇叶绕轮毂）：把这些图元的旋转中心设为该圆心（工具参数 rotatePivotX/rotatePivotY/rotatePivotElements，或创建时 pivotX/pivotY），脚本里只对它们调用 setRotationEx(累计角度)；禁止用 setXEx/setYEx 配合 Math.cos/Math.sin 手算公转。`
 
 /** 图纸（gv）可用函数参考 */
 export const GV_API_REFERENCE = `gv：findNodeByIdEx(id) 查找图元；setZoomEx({x,y})/getZoomEx()；setPageParamsEx(name,value)/getPageParamsEx(name) 读写页面参数（name 必须是字符串字面量，如 gv.setPageParamsEx("fanRunning", 1)，服务端组装时会自动声明；不要用变量作参数名）；setLayerVisibleByIndexEx(index,visible)/getLayerVisibleByIndexEx(index)；setLayerVisibleByNameEx(name,visible)/getLayerVisibleByNameEx(name)。`
@@ -114,6 +116,7 @@ export function validateScript(
   if (hasDynamicPageParamName(script)) {
     return '页面参数名必须是字符串字面量（如 gv.getPageParamsEx("fanRunning")），不能用变量，否则无法自动声明页面参数'
   }
+  if (hasManualOrbit(script)) return MANUAL_ORBIT_ERROR
   try {
     // 仅编译不执行，用于语法检查；形参与运行时一致，才能发现与形参重名的声明
     new Function(...paramNames, script)

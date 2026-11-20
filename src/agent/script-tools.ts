@@ -20,6 +20,7 @@ const SCRIPT_RULES = '只写函数体，不要 function 声明与外层花括号
 export const PAGE_SCRIPT_API_REFERENCE = `图纸脚本签名为 function(data, core, cache)，在画面加载完成后执行一次：data=当前图纸 GraphView（与事件脚本中的 gv 相同），core=核心对象，cache=可存放自定义数据的对象。${SCRIPT_RULES}
 ${GV_API_REFERENCE.replace(/^gv：/, 'data（GraphView）：')}
 图元操作：data.findNodeByIdEx("图元ID") 取得图元后，可用 setVisibleEx/setXEx/setYEx/setRotationEx/setWidthEx/setHeightEx/setBackgroundColorEx/setBorderColorEx/setTextColorEx/setTextEx 等 Ex 方法，必须判空。
+setXEx/setYEx/getXEx/getYEx 是图元旋转中心（roatePos，默认包围盒中心）的画布绝对坐标，不是左上角；setRotationEx(角度) 绕自身旋转中心转到该绝对角度。setWidthEx/setHeightEx 以图元中心为基准向两侧伸缩：做进度条/液位条时必须同步调整 setXEx/setYEx 固定起点（横向条 setXEx(起点x + 新宽度/2)，纵向条 setYEx(底边y - 新高度/2)），否则条从中间向两边变长。多个图元绕同一圆心转动（如扇叶绕轮毂）时，用本工具的 rotatePivotX/rotatePivotY/rotatePivotElements 把它们的旋转中心设为该圆心，脚本只调用 setRotationEx(累计角度)，禁止用 setXEx/setYEx 配合 Math.cos/Math.sin 手算公转。
 ${UTILS_API_REFERENCE}`
 
 /** 管道脚本 API 参考 */

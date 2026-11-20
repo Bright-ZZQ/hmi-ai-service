@@ -15,6 +15,7 @@ export interface SandboxNode {
   id: string
   name?: string
   type?: string
+  /** 旋转中心（roatePos）画布坐标，与运行时 getXEx/getYEx 一致 */
   x?: number
   y?: number
   width?: number

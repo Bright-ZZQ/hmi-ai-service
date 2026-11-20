@@ -3,7 +3,7 @@
  */
 
 import type { SkillRegistryEntry } from '../../../types'
-import { SHAPE_GRADIENT_PROPS, STROKE_GRADIENT_PROPS } from '../_shared'
+import { SHAPE_GRADIENT_PROPS, SHAPE_PIVOT_PROPS, STROKE_GRADIENT_PROPS } from '../_shared'
 
 export const CREATE_DISPLAY_RECT: SkillRegistryEntry = {
   group: 'display',
@@ -25,6 +25,7 @@ export const CREATE_DISPLAY_RECT: SkillRegistryEntry = {
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           cornerRadius: { type: 'number', description: '圆角大小(px)，指定后类型变为 RoundRect' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -54,6 +55,7 @@ export const CREATE_DISPLAY_ELLIPSE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -151,6 +153,7 @@ export const CREATE_DISPLAY_POLYGON: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -205,6 +208,7 @@ export const CREATE_DISPLAY_PIE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -236,6 +240,7 @@ export const CREATE_DISPLAY_ARC: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -267,6 +272,7 @@ export const CREATE_DISPLAY_CHORD: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -425,6 +431,7 @@ width 和 height = radius × 2。如 sides=3 为等边三角形，sides=6 为正
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
+          ...SHAPE_PIVOT_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },

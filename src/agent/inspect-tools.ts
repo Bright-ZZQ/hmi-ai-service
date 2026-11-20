@@ -517,12 +517,16 @@ const handleTestScript: ToolHandler = (ctx: ToolExecContext) => {
 
   const nodes = session.workingElements.map((element) => {
     const bounds = getElementBounds(element)
+    // 与运行时一致：getXEx/getYEx 返回旋转中心（roatePos，缺省为包围盒中心），而不是左上角
+    const pivot = isRecord(element.roatePos) ? element.roatePos : undefined
+    const pivotX = typeof pivot?.x === 'number' ? pivot.x : NaN
+    const pivotY = typeof pivot?.y === 'number' ? pivot.y : NaN
     return {
       id: getElementKey(element),
       name: elementLabel(element),
       type: typeof element.type === 'string' ? element.type : undefined,
-      x: bounds?.x,
-      y: bounds?.y,
+      x: Number.isFinite(pivotX) ? pivotX : bounds ? bounds.x + bounds.width / 2 : undefined,
+      y: Number.isFinite(pivotY) ? pivotY : bounds ? bounds.y + bounds.height / 2 : undefined,
       width: bounds?.width,
       height: bounds?.height,
       text: element.type === 'Text' ? decodeText(element.text) : undefined,

@@ -173,3 +173,105 @@ describe('旋转中心归一', () => {
     assert.equal(result.element.store.dynamicDyna[0].pars.rotCenter.original, 0)
   })
 })
+
+describe('脚本驱动的多部件同心旋转', () => {
+  const hub = { x: 920, y: 200 }
+  const blades = [
+    [{ x: 906, y: 182 }, { x: 934, y: 182 }, { x: 920, y: 132 }],
+    [{ x: 929, y: 221 }, { x: 943, y: 197 }, { x: 979, y: 234 }],
+    [{ x: 897, y: 197 }, { x: 911, y: 221 }, { x: 861, y: 234 }],
+  ]
+  const createFan = (session, extra = {}) => blades.map((points, i) =>
+    run('create_display_polygon', { name: `风机叶片${i + 1}`, points, ...extra }, session))
+  // 复现问题图纸：把 setXEx/setYEx 当作左上角手算公转
+  const ORBIT_SCRIPT = [
+    'var hubX = 920, hubY = 200, th = 0;',
+    'setInterval(function () {',
+    '  th = (th + 18) % 360;',
+    '  var node = gv.findNodeByIdEx("b1");',
+    '  if (!node) return;',
+    '  var a = Math.atan2(-43, 0) + th * Math.PI / 180;',
+    '  node.setXEx(hubX + 43 * Math.cos(a) - 14);',
+    '  node.setYEx(hubY + 43 * Math.sin(a) - 25);',
+    '  node.setRotationEx(th);',
+    '}, 100);',
+  ].join('\n')
+  const PIVOT_SCRIPT = [
+    'var ids = ["b1", "b2", "b3"], th = 0;',
+    'setInterval(function () {',
+    '  th = (th + 18) % 360;',
+    '  ids.forEach(function (id) { var n = gv.findNodeByIdEx(id); if (n) n.setRotationEx(th); });',
+    '}, 100);',
+  ].join('\n')
+
+  it('拒绝用 setXEx/setYEx + 三角函数手算公转的脚本，并指出正确做法', () => {
+    const problem = validateScript(ORBIT_SCRIPT)
+    assert.match(problem, /旋转中心/)
+    assert.match(problem, /rotatePivotX/)
+    assert.equal(validateScript(PIVOT_SCRIPT), null)
+    assert.equal(validateScript('data.setXEx(Math.cos(1) * 10); data.setYEx(5)'), null)
+  })
+
+  it('create_display_* 传 pivotX/pivotY 时旋转中心落在公共圆心', () => {
+    const session = createSession('display')
+    const created = createFan(session, { pivotX: hub.x, pivotY: hub.y })
+    for (const element of created) assert.deepEqual(element.roatePos, hub)
+
+    const bad = run('create_display_polygon', { points: blades[0], pivotX: 1 }, session)
+    assert.equal(bad.success, false)
+    assert.equal(session.workingElements.length, 3)
+  })
+
+  it('add_event_definition 的 rotatePivot* 把目标图元旋转中心设为圆心', () => {
+    const session = createSession('display')
+    const created = createFan(session)
+    const button = run('create_display_rect', { name: '按钮', x: 0, y: 0, width: 100, height: 40 }, session)
+
+    const result = run('add_event_definition', {
+      scope: 'element', elementName: button.id, action: 'script', script: PIVOT_SCRIPT,
+      rotatePivotX: hub.x, rotatePivotY: hub.y, rotatePivotElements: created.map(el => el.name),
+    }, session)
+
+    assert.equal(result.success, true)
+    assert.deepEqual(result.rotatePivot.elements, created.map(el => el.id))
+    for (const id of created.map(el => el.id)) {
+      assert.deepEqual(session.workingElements.find(el => el.id === id).roatePos, hub)
+    }
+    assert.deepEqual(session.workingElements.find(el => el.id === button.id).roatePos, { x: 50, y: 20 })
+  })
+
+  it('rotatePivot* 参数不完整或目标不存在时拒绝且不改动图元', () => {
+    const session = createSession('display')
+    const created = createFan(session)
+    const before = created.map(el => el.roatePos)
+
+    const missing = run('set_display_script', { script: PIVOT_SCRIPT, rotatePivotElements: [created[0].id] }, session)
+    assert.equal(missing.success, false)
+    const unknown = run('set_display_script', {
+      script: PIVOT_SCRIPT, rotatePivotX: hub.x, rotatePivotY: hub.y, rotatePivotElements: ['不存在'],
+    }, session)
+    assert.equal(unknown.success, false)
+    const orbit = run('set_display_script', {
+      script: ORBIT_SCRIPT, rotatePivotX: hub.x, rotatePivotY: hub.y, rotatePivotElements: [created[0].id],
+    }, session)
+    assert.equal(orbit.success, false)
+    assert.deepEqual(session.workingElements.map(el => el.roatePos), before)
+
+    const ok = run('set_display_script', {
+      script: PIVOT_SCRIPT, rotatePivotX: hub.x, rotatePivotY: hub.y, rotatePivotElements: [created[0].id],
+    }, session)
+    assert.equal(ok.success, true)
+    assert.deepEqual(session.workingElements[0].roatePos, hub)
+  })
+
+  it('test_script 沙箱的 getXEx/getYEx 返回旋转中心而非左上角', () => {
+    const session = createSession('display')
+    const [blade] = createFan(session)
+    const result = run('test_script', {
+      kind: 'event', target: blade.id,
+      script: 'gv.setPageParamsEx("pos", data.getXEx() + "," + data.getYEx())',
+    }, session)
+    assert.equal(result.success, true)
+    assert.ok(result.calls.some(call => call.includes('"920,157"')), result.calls.join('\n'))
+  })
+})
