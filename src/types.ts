@@ -52,7 +52,6 @@ export interface ToolDefinition {
 export type ToolCategory =
   | 'plan'
   | 'shape'
-  | 'composite'
   | 'edit'
   | 'assembly'
   | 'feature'

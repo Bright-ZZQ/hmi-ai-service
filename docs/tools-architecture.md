@@ -13,7 +13,6 @@ src/
     _shared/        参数片段与工厂（渐变 / 条件 / 旋转中心 / update·delete·plan 工具工厂）
     plan/           declare_generation_plan
     shape/          create_display_* / create_symbol_*
-    composite/      create_metric_panel / create_equipment / create_chart_panel
     feature/        add_feature_*、add_event_definition、set_display_script、set_pipe_script、set_symbol_attr_function
     edit/           update_element / delete_element / find_elements
     batch/          clone_element_grid / bulk_apply_feature / copy_features / import_point_table / group_elements / ungroup_elements
@@ -30,7 +29,7 @@ src/
 
 ## 分类说明
 
-分类即 `SkillMeta.category`（plan / shape / composite / feature / edit / batch / layout / page / inspect / assembly）。脚本类工具保持 `feature`，随动态特性在特性阶段下发。`phases` / `keywords` / `core` 是 `agent/tool-routing.ts` 的路由依据，`audience` 决定是否对 MCP 暴露（`'agent'` 仅内部循环使用，缺省 `'all'`）。
+分类即 `SkillMeta.category`（plan / shape / feature / edit / batch / layout / page / inspect / assembly）。脚本类工具保持 `feature`，随动态特性在特性阶段下发。`phases` / `keywords` / `core` 是 `agent/tool-routing.ts` 的路由依据，`audience` 决定是否对 MCP 暴露（`'agent'` 仅内部循环使用，缺省 `'all'`）。
 
 ## ToolModule
 

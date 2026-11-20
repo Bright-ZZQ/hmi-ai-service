@@ -29,7 +29,7 @@ describe('系统提示词', () => {
 
   it('MCP instructions（display）包含图纸相关内容', () => {
     const text = buildMcpInstructions('display')
-    for (const word of ['assemble_display', 'create_metric_panel', 'document']) {
+    for (const word of ['assemble_display', 'document']) {
       assert.ok(text.includes(word), `应包含：${word}`)
     }
   })

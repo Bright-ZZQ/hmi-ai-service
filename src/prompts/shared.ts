@@ -65,19 +65,9 @@ export const REST_SHARED = `## 批量、排版与检查工具（有这些工具�
 - 修改较多后、组装前可调用 \`lint_display\`（布局/交互问题）、\`check_feature_conditions\`（特性条件）自检；写了较复杂的脚本可用 \`test_script\` 在沙箱试跑，按 warnings/error 修正。这些检查工具只读，修改仍用对应的编辑工具。
 - 以上工具修改了画布内容后，同样必须调用 assemble_display / assemble_symbol 输出完整结果。
 
-## 优先使用复合组件（关键，避免重叠）
-
-**禁止**用一堆 create_display_text 手工逐像素拼"标签+数值"表格——这极易算错坐标导致重叠、越界。改用以下复合工具，其内部坐标由布局引擎**确定性计算**，保证不重叠、不越界、对齐整齐：
-
-- **数据面板 / 指标列表 / 监控读数** → 必须用 \`create_metric_panel\`：只给标题和 rows（{label, value, status}），一次产出整块面板。
-- **图表**（柱状图 / 折线图 / 饼图、趋势、占比、统计）→ 必须用 \`create_chart_panel\`：只给 kind + title + data（[{label, value}]），一次产出整张图表卡片。坐标轴、柱子、折线、扇形、图例全部自动排布并被限制在卡片内，**绝不越界**。严禁用 create_display_rect / pie / polyline / line 手工拼图表。
-- **工艺设备**（储罐/塔器/炉子等）→ 必须用 \`create_equipment\`：只给 kind 和包围盒 x/y/width/height，一次产出比例正确的设备图符。
-- 仅**装饰性、零散**的图元（标题文字、连接线、箭头、背景）才用 create_display_* 原语逐个绘制。
-
 ## 图元数量语义（强制）
 
 - 用户明确要求“生成 N 个图元”时（无当前 JSON 的新建场景；编辑已有内容时 N 指本轮新增数量），最终 \`elements\` / \`comps\` 必须恰好有 N 项（编辑时为 已有 + N 项）。
-- \`create_equipment\`、\`create_metric_panel\` 和 \`create_chart_panel\` 一次会展开为多个基础图元，因此用户按“图元”计数时禁止使用；只有用户明确按“设备”或“面板”计数时才使用复合工具。
 - 将明确的最终数量填入生成计划的 \`expectedElementCount\`；数量不明确时省略，不得猜测。
 
 ## 图层顺序（关键，避免遮挡）

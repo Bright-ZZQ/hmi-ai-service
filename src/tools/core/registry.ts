@@ -14,7 +14,6 @@
 import type { EditorType, SkillMeta, SkillRegistryEntry, ToolDefinition } from '../../types'
 import { ASSEMBLY_TOOLS } from '../assembly'
 import { BATCH_TOOLS } from '../batch'
-import { COMPOSITE_TOOLS } from '../composite'
 import { EDIT_TOOLS, LOOKUP_TOOLS } from '../edit'
 import { FEATURE_TOOLS } from '../feature'
 import { INSPECT_TOOLS } from '../inspect'
@@ -31,7 +30,6 @@ const forGroup = (modules: ToolModule[], group: EditorType): ToolModule[] =>
 const MODULES: ToolModule[] = [
   ...PLAN_TOOLS,
   ...SHAPE_TOOLS,
-  ...COMPOSITE_TOOLS,
   ...forGroup(EDIT_TOOLS, 'display'),
   ...forGroup(ASSEMBLY_TOOLS, 'display'),
   ...FEATURE_TOOLS,

@@ -40,7 +40,7 @@ export function getToolsForPhase(editorType: EditorType, phase: AgentPhase): Too
 /**
  * 按需下发（P3）：按编辑器类型 + 用户意图筛选下发给模型的工具子集。
  * - core（生成计划 / 组装）始终保留；
- * - shape / composite（基础绘制词汇）始终保留，避免模型无图元可用；
+ * - shape（基础绘制词汇）始终保留，避免模型无图元可用；
  * - feature（动态特性）仅当用户表达动态意图时下发，静态需求下省去大段特性参数；
  * - edit（修改 / 删除）仅在多轮修改（存在当前 JSON）时下发。
  */

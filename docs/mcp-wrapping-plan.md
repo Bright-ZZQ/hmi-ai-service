@@ -29,7 +29,6 @@
 |---|---|
 | `core/session.ts` | `createSession`、`getCanvasFromJson`、`getElementsFromJson` |
 | `shape/handlers.ts` | `handleCreateDisplayElement`、`handleCreateSymbolElement`，以及 `TOOL_TO_ELEMENT_TYPE`、`TOOL_TO_SYMBOL_TYPE` |
-| `composite/handlers.ts` | `handleMetricPanel`、`handleChartPanel`、`handleEquipment` |
 | `edit/handlers.ts` | `handleUpdateElement`、`handleDeleteElement`、`handleFindElements`，以及 `mergeElement` 等辅助函数 |
 | `assembly/handlers.ts` | `handleAssembleDisplay`、`handleAssembleSymbol`，以及 `resolveExplicitElements`、`ensureEncodedTexts` |
 | `feature/handlers.ts` | 动态/交互特性（`attachFeatureFromArgs`、`finishFeatureAttach`）、事件定义 |
@@ -92,7 +91,7 @@
 ### 5.6 instructions 与 prompts
 
 将 `SYSTEM_PROMPT` 拆分：
-- `src/prompts/`：`shared.ts` 为领域规则（共享部分），包括复合组件优先、图层顺序、画布尺寸与防重叠、颜色与文本可见性、特性使用规则、批量与检查工具用法、多轮修改规则、必须调用 `assemble_*`；`loop.ts`（`buildLoopSystemPrompt`）为内部循环专属部分，不对外暴露，包括思考格式（`【结论】`）、输出长度控制、"特性工具按计划下发"、`ask_user` 相关规则；`mcp.ts`（`buildMcpInstructions`）为 MCP 专属。
+- `src/prompts/`：`shared.ts` 为领域规则（共享部分），包括图层顺序、画布尺寸与防重叠、颜色与文本可见性、特性使用规则、批量与检查工具用法、多轮修改规则、必须调用 `assemble_*`；`loop.ts`（`buildLoopSystemPrompt`）为内部循环专属部分，不对外暴露，包括思考格式（`【结论】`）、输出长度控制、"特性工具按计划下发"、`ask_user` 相关规则；`mcp.ts`（`buildMcpInstructions`）为 MCP 专属。
 - `agent-service.ts` 仅调用 `buildLoopSystemPrompt`。
 
 对外：
