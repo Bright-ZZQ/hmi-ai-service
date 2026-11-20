@@ -51,6 +51,7 @@ import { ensureDeclaredPageParams } from './page-tools'
 import { applyZOrderOps } from './layout-tools'
 import type { SessionState, ToolExecContext, ToolHandler } from './tool-context'
 import { validateOutput, formatErrors } from './schema-validator'
+import { propagateOverlayEvents } from './overlay-events'
 import type {
   EditorType,
   AgentMessage,
@@ -100,6 +101,7 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 用户不会给图元 ID，而是描述图元名称或文字图元的文字内容（图纸中文字为 base64，\`find_elements\` 已解码）。需要定位图元（事件所属图元、动作目标图元）时先调用 \`find_elements\`；恰好 1 个候选才可继续；0 个或多个候选时必须调用 \`ask_user\` 提问（如“该图元是否在图纸右上方？”“该图元是否在某某图元旁边？”或列出候选让用户选），禁止猜测。用户回答后再次定位。
 - 添加事件定义后，必须调用 assemble_display 返回完整图纸，其他内容保持不变。
 - 脚本类特性（均不新建图元，设置后必须调用 assemble 工具输出完整结果）：
+  - 由“底板形状 + 文字”组成的按钮：事件与交互特性只配置在底板上。服务端组装时会自动把底板的鼠标事件/交互特性同步到压在底板上的文字和装饰图元（标题带“跟随…”），点到文字同样生效；不要再手工给文字添加转发事件。
   - 图纸初始化脚本（画面加载后执行一次）→ \`set_display_script\`；默认追加到原脚本之后，仅用户明确要求替换时才 mode=replace。
   - 管道流动控制脚本 → \`set_pipe_script\`，目标必须是管道图元；脚本必须调用 data.setScriptEnabled(true) 流动组才会显示。
   - 图符（symbol）属性由数据绑定值计算（如“温度超过 80 变红”）→ \`set_symbol_attr_function\`，脚本 return 属性值，读取的绑定名必须在 dataBindings 中声明。
@@ -738,6 +740,8 @@ function handleAssembleDisplay({ name, args, session, onStep, emit }: ToolExecCo
   onStep(step)
 
   return JSON.stringify(document)
+  // 层级确定后再同步：压在按钮底板上的文字/装饰也要响应底板的点击与悬停
+  finalDocument.elements = propagateOverlayEvents(finalDocument.elements as Record<string, unknown>[])
 }
 
 // 图符组装
