@@ -7,13 +7,20 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
-import { getToolsForType, isAssemblyTool } from '../agent/skill-registry'
-import { buildMcpInstructions } from '../agent/prompts'
-import { enrichModelPoints } from '../agent/model-point-resolver'
-import { briefOf, compactToolResult } from '../agent/tool-result-compactor'
-import { formatErrors } from '../agent/schema-validator'
-import { createSession, executeToolCall, validateSessionOutput } from '../agent/tools'
-import type { Rec } from '../agent/tool-context'
+import { buildMcpInstructions } from '../prompts'
+import {
+  briefOf,
+  compactToolResult,
+  createSession,
+  enrichModelPoints,
+  executeToolCall,
+  formatErrors,
+  getSkillMeta,
+  getToolsForType,
+  isAssemblyTool,
+  validateSessionOutput,
+} from '../tools'
+import type { Rec } from '../tools'
 import type { EditorType, ModelPointApiConfig } from '../types'
 import { toFilename } from './result-store'
 import type { BundleFile } from './bundle'
@@ -41,8 +48,8 @@ export interface HmiMcpServerOptions {
 const SERVER_INFO = { name: 'hmiengineweb-ai-service', version: '1.0.0' }
 const MAX_STATE_ELEMENTS = 100
 
-// 外部 agent 有自己的用户通道，不暴露向用户提问的工具
-const HIDDEN_TOOLS = new Set(['ask_user'])
+// 外部 agent 有自己的用户通道，不暴露 audience 为 'agent' 的工具（如向用户提问的 ask_user）
+const isAgentOnlyTool = (name: string): boolean => getSkillMeta(name)?.audience === 'agent'
 
 const BEGIN_SESSION = 'begin_session'
 const GET_SESSION_STATE = 'get_session_state'
@@ -124,7 +131,7 @@ export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
   const { editorType, resolveModelPointApi, exportResult } = options
   let session = createSession(editorType)
 
-  const toolDefinitions = getToolsForType(editorType).filter(tool => !HIDDEN_TOOLS.has(tool.function.name))
+  const toolDefinitions = getToolsForType(editorType).filter(tool => !isAgentOnlyTool(tool.function.name))
   const requiredByTool = new Map(toolDefinitions.map(tool => [tool.function.name, tool.function.parameters.required]))
   const tools = [
     ...SESSION_TOOLS,

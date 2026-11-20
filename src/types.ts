@@ -77,6 +77,8 @@ export interface SkillMeta {
   core?: boolean
   /** 相关性预筛关键词（中文意图词） */
   keywords?: string[]
+  /** 工具受众：'agent' 仅内部 Agent 循环使用，不对 MCP 暴露；默认 'all' */
+  audience?: 'all' | 'agent'
 }
 
 /** Skill 注册条目 */

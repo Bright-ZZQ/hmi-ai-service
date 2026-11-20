@@ -4,11 +4,11 @@
 
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { buildDynamicFeature, buildInteractiveFeature } = require('../dist/agent/dynamic-feature-builders')
-const { buildEquipment } = require('../dist/agent/element-builders')
-const { buildGenerationPlan, validateGenerationPlan } = require('../dist/agent/generation-plan')
-const { validateOutput } = require('../dist/agent/schema-validator')
-const { getToolsForType } = require('../dist/agent/skill-registry')
+const { buildDynamicFeature, buildInteractiveFeature } = require('../dist/tools/feature/dynamic-feature-builders')
+const { buildEquipment } = require('../dist/tools/lib/element-builders')
+const { buildGenerationPlan, validateGenerationPlan } = require('../dist/tools/plan/generation-plan')
+const { validateOutput } = require('../dist/tools/lib/schema-validator')
+const { getToolsForType } = require('../dist/tools')
 
 const featureTools = [
   'add_feature_rotate',

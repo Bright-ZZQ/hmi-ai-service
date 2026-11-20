@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
-const { validateGenerationPlan } = require('../dist/agent/generation-plan')
+const { createSession, executeToolCall } = require('../dist/tools')
+const { validateGenerationPlan } = require('../dist/tools/plan/generation-plan')
 
 const run = (name, args, session) => JSON.parse(executeToolCall(name, args, session, () => {}, () => {}))
 

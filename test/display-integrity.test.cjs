@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
-const { validateScript } = require('../dist/agent/event-definition')
-const { collectPageParamNames, ensurePageParams } = require('../dist/agent/page-params')
-const { findDisplayInteractionIssues, normalizeRotatePivots } = require('../dist/agent/display-integrity')
-const { encodeText } = require('../dist/agent/element-lookup')
+const { createSession, executeToolCall } = require('../dist/tools')
+const { validateScript } = require('../dist/tools/feature/event-definition')
+const { collectPageParamNames, ensurePageParams } = require('../dist/tools/page/page-params')
+const { findDisplayInteractionIssues, normalizeRotatePivots } = require('../dist/tools/assembly/display-integrity')
+const { encodeText } = require('../dist/tools/lib/element-lookup')
 
 const run = (name, args, session) => JSON.parse(executeToolCall(name, args, session, () => {}, () => {}))
 

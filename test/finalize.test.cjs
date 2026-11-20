@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
-const { validateSessionOutput } = require('../dist/agent/tools')
+const { createSession, executeToolCall } = require('../dist/tools')
+const { validateSessionOutput } = require('../dist/tools')
 
 const run = (name, args, session) => JSON.parse(executeToolCall(name, args, session, () => {}, () => {}))
 const planErrors = errors => errors.filter(error => error.path === 'generationPlan')

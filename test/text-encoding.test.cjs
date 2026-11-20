@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
+const { createSession, executeToolCall } = require('../dist/tools')
 
 const run = (name, args, session) => JSON.parse(executeToolCall(name, args, session, () => {}, () => {}))
 const encode = text => Buffer.from(text, 'utf-8').toString('base64')

@@ -4,10 +4,11 @@
 
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
-const { getToolsForType, lintRegistry, selectTools } = require('../dist/agent/skill-registry')
-const { validateScript } = require('../dist/agent/event-definition')
-const { extractReadBindings, mergePageScript } = require('../dist/agent/script-tools')
+const { createSession, executeToolCall } = require('../dist/tools')
+const { getToolsForType, lintRegistry } = require('../dist/tools')
+const { selectTools } = require('../dist/agent/tool-routing')
+const { validateScript } = require('../dist/tools/feature/event-definition')
+const { extractReadBindings, mergePageScript } = require('../dist/tools/feature/script-tools')
 
 function run(session, name, args) {
   return JSON.parse(executeToolCall(name, args, session, () => {}, () => {}))

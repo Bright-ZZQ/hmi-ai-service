@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { describe, it } = require('node:test')
-const { buildLoopSystemPrompt, buildMcpInstructions } = require('../dist/agent/prompts')
+const { buildLoopSystemPrompt, buildMcpInstructions } = require('../dist/prompts')
 
 const readFixture = name =>
   fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8').replace(/\r\n/g, '\n')

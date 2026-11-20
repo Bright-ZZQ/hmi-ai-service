@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { propagateOverlayEvents, MIRROR_FLAG } = require('../dist/agent/overlay-events')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
+const { propagateOverlayEvents, MIRROR_FLAG } = require('../dist/tools/assembly/overlay-events')
+const { createSession, executeToolCall } = require('../dist/tools')
 
 const rectAt = (x, y, w, h) => [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }]
 

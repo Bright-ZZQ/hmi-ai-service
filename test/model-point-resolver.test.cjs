@@ -5,9 +5,9 @@
 const assert = require('node:assert/strict')
 const http = require('node:http')
 const { after, before, describe, it } = require('node:test')
-const { buildDynamicFeature, buildInteractiveFeature } = require('../dist/agent/dynamic-feature-builders')
-const { buildEventDefinition } = require('../dist/agent/event-definition')
-const { enrichModelPoints } = require('../dist/agent/model-point-resolver')
+const { buildDynamicFeature, buildInteractiveFeature } = require('../dist/tools/feature/dynamic-feature-builders')
+const { buildEventDefinition } = require('../dist/tools/feature/event-definition')
+const { enrichModelPoints } = require('../dist/tools/lib/model-point-resolver')
 
 const requests = []
 let server

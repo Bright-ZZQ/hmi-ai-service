@@ -13,14 +13,19 @@
  * - 模型无需手动传递大型 JSON 对象
  */
 
-import { isAssemblyTool, narrowToolsForRound, selectTools } from './skill-registry'
-import { enrichModelPoints } from './model-point-resolver'
+import { narrowToolsForRound, selectTools } from './tool-routing'
 import { ThinkingDigest } from './thinking-digest'
 import { generatePlanPreview } from './plan-preview'
-import { compactToolResult } from './tool-result-compactor'
-import { buildLoopSystemPrompt } from './prompts'
-import { createSession, executeToolCall, validateSessionOutput } from './tools'
-import { formatErrors } from './schema-validator'
+import { buildLoopSystemPrompt } from '../prompts'
+import {
+  compactToolResult,
+  createSession,
+  enrichModelPoints,
+  executeToolCall,
+  formatErrors,
+  isAssemblyTool,
+  validateSessionOutput,
+} from '../tools'
 import type {
   EditorType,
   AgentMessage,
@@ -32,9 +37,6 @@ import type {
   StreamMetrics,
   AgentContext,
 } from '../types'
-
-export { createSession, executeToolCall } from './tools'
-export type { SessionState } from './tools'
 
 // ============================================================
 // Agent Loop 主逻辑

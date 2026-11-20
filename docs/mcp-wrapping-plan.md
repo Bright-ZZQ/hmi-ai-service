@@ -16,35 +16,36 @@
 
 ## 3. 现状
 
-- 60 多个工具的 handler 都在 [src/agent/agent-service.ts](../src/agent/agent-service.ts) 内部，包括创建图元、复合组件、修改/删除、组装、特性、事件、脚本，以及 `TOOL_HANDLERS` 接线、`lintRegistry` 自检、`executeToolCall`。
+- 60 多个工具的 handler 原先都在 [src/agent/agent-service.ts](../src/agent/agent-service.ts) 内部（现已拆分到 [src/tools/](../src/tools/)，见 [tools-architecture.md](tools-architecture.md)），包括创建图元、复合组件、修改/删除、组装、特性、事件、脚本，以及 `TOOL_HANDLERS` 接线、`lintRegistry` 自检、`executeToolCall`。
 - `runAgentLoop` 内含只服务于 LLM 循环的后处理：`validateFinalOutput`（Schema、交互问题、计划校验）、`enrichModelPoints`、`compactToolResult`。
-- 状态集中在 `SessionState`（[tool-context.ts](../src/agent/tool-context.ts)），服务本身无状态。
-- 现有 12 个测试均通过 `require('../dist/agent/agent-service')` 引入 `createSession` / `executeToolCall`，因此该模块必须继续导出它们。
+- 状态集中在 `SessionState`（[context.ts](../src/tools/core/context.ts)），服务本身无状态。
+- 原有测试通过 `require('../dist/agent/agent-service')` 引入 `createSession` / `executeToolCall`；工具层独立后，测试改为 `require('../dist/tools')`，`agent-service` 不再 re-export（`minimalAssembleArgs` 仍从 `agent-service` 导出）。
 
 ## 4. 工具层抽取
 
-新增 `src/agent/tools/`，仅做搬迁，不改行为。
+工具层位于 `src/tools/`（agent 与 mcp 共用），仅做搬迁，不改行为。
 
 | 新文件 | 来源 |
 |---|---|
-| `session.ts` | `createSession`、`getCanvasFromJson`、`getElementsFromJson` |
-| `handlers/create.ts` | `handleCreateDisplayElement`、`handleCreateSymbolElement`、`handleMetricPanel`、`handleChartPanel`、`handleEquipment`，以及 `TOOL_TO_ELEMENT_TYPE`、`TOOL_TO_SYMBOL_TYPE` |
-| `handlers/edit.ts` | `handleUpdateElement`、`handleDeleteElement`、`handleFindElements`，以及 `mergeElement` 等辅助函数 |
-| `handlers/assemble.ts` | `handleAssembleDisplay`、`handleAssembleSymbol`，以及 `resolveExplicitElements`、`ensureEncodedTexts` |
-| `handlers/features.ts` | 动态/交互特性（`attachFeatureFromArgs`、`finishFeatureAttach`）、事件定义 |
-| `handlers/script.ts` | `set_display_script`、`set_pipe_script`、`set_symbol_attr_function`，以及 `rotatePivot` 相关函数 |
-| `handlers/plan.ts` | `declare_generation_plan`、`ask_user` |
-| `index.ts` | 汇总 `TOOL_HANDLERS`（含 `EXTENDED_TOOL_HANDLERS`）；启动时执行 `lintRegistry`；导出 `executeToolCall`、`listToolNames()` |
-| `finalize.ts` | 将 `runAgentLoop` 中的 `validateFinalOutput` 闭包改为纯函数 `validateSessionOutput(session, json, { requirePlan })`；`baseElements`、`isEditing` 均可从 `session.currentJson` 推出 |
+| `core/session.ts` | `createSession`、`getCanvasFromJson`、`getElementsFromJson` |
+| `shape/handlers.ts` | `handleCreateDisplayElement`、`handleCreateSymbolElement`，以及 `TOOL_TO_ELEMENT_TYPE`、`TOOL_TO_SYMBOL_TYPE` |
+| `composite/handlers.ts` | `handleMetricPanel`、`handleChartPanel`、`handleEquipment` |
+| `edit/handlers.ts` | `handleUpdateElement`、`handleDeleteElement`、`handleFindElements`，以及 `mergeElement` 等辅助函数 |
+| `assembly/handlers.ts` | `handleAssembleDisplay`、`handleAssembleSymbol`，以及 `resolveExplicitElements`、`ensureEncodedTexts` |
+| `feature/handlers.ts` | 动态/交互特性（`attachFeatureFromArgs`、`finishFeatureAttach`）、事件定义 |
+| `feature/script-handlers.ts` | `set_display_script`、`set_pipe_script`、`set_symbol_attr_function`，以及 `rotatePivot` 相关函数 |
+| `plan/handler.ts`、`interaction/handler.ts` | `declare_generation_plan`、`ask_user` |
+| `core/executor.ts` | 汇总各 `ToolModule` 的 handler 为 `TOOL_HANDLERS`；启动时执行 `lintRegistry`；导出 `executeToolCall`、`listToolNames()` |
+| `core/finalize.ts` | 将 `runAgentLoop` 中的 `validateFinalOutput` 闭包改为纯函数 `validateSessionOutput(session, json, { requirePlan })`；`baseElements`、`isEditing` 均可从 `session.currentJson` 推出 |
 
 `agent-service.ts` 的变化：
-- 删除搬走的 handler，改为从 `./tools` 引入。
-- 继续 re-export `createSession`、`executeToolCall`、`SessionState`，现有测试无需修改。
+- 删除搬走的 handler，改为从 `../tools` 引入。
+- 不再 re-export `createSession`、`executeToolCall`、`SessionState`，测试直接从 `dist/tools` 引入。
 - `runAgentLoop` 流程不变（模型调用、重试、`compactToolResult`、`narrowToolsForRound`、兜底组装、回滚），调用 `validateSessionOutput(..., { requirePlan: true })`。
 
 注意事项：
-- 避免循环依赖：handler 只依赖 `tool-context.ts` 与各 builder 模块，不反向依赖 `agent-service.ts`。
-- 本阶段结束后，`npm test` 必须原样全部通过。
+- 避免循环依赖：handler 只依赖 `core/context.ts` 与各 builder 模块，不反向依赖 `agent-service.ts`；依赖方向由 `scripts/check-deps.cjs` 校验。
+- 本阶段结束后，`npm test` 必须全部通过。
 
 ## 5. MCP 层
 
@@ -54,7 +55,7 @@
 
 - 工具定义取自 `getToolsForType(editorType)`；`ToolDefinition.function.parameters` 本身是 JSON Schema，直接映射为 MCP `inputSchema`，不手写。
 - 调用走 `executeToolCall(name, args, session, onStep, emit)`，与 agent loop 使用完全相同的 handler。
-- 不暴露 `ask_user`（外部 agent 有自己的用户通道）。
+- 不暴露 `ask_user`（外部 agent 有自己的用户通道）：按 `SkillMeta.audience === 'agent'` 过滤，不再硬编码工具名。
 - 其余工具默认全部暴露；预留按 `SkillMeta.category` 限制暴露类别的配置，避免占满外部 agent 的上下文。
 - 额外提供：
   - `begin_session({ currentJson? })`：重置会话，并载入已有 JSON 以便增量编辑。
@@ -91,8 +92,8 @@
 ### 5.6 instructions 与 prompts
 
 将 `SYSTEM_PROMPT` 拆分：
-- `src/agent/prompts.ts`：领域规则（共享部分）。包括复合组件优先、图层顺序、画布尺寸与防重叠、颜色与文本可见性、特性使用规则、批量与检查工具用法、多轮修改规则、必须调用 `assemble_*`。
-- `agent-service.ts`：内部循环专属部分，不对外暴露。包括思考格式（`【结论】`）、输出长度控制、"特性工具按计划下发"、`ask_user` 相关规则。
+- `src/prompts/`：`shared.ts` 为领域规则（共享部分），包括复合组件优先、图层顺序、画布尺寸与防重叠、颜色与文本可见性、特性使用规则、批量与检查工具用法、多轮修改规则、必须调用 `assemble_*`；`loop.ts`（`buildLoopSystemPrompt`）为内部循环专属部分，不对外暴露，包括思考格式（`【结论】`）、输出长度控制、"特性工具按计划下发"、`ask_user` 相关规则；`mcp.ts`（`buildMcpInstructions`）为 MCP 专属。
+- `agent-service.ts` 仅调用 `buildLoopSystemPrompt`。
 
 对外：
 - MCP `instructions` 使用共享部分，并推荐先调用 `declare_generation_plan`。
@@ -104,7 +105,7 @@
 ## 6. 循环专属行为（不下沉）
 
 以下逻辑只服务于"服务端自己调用 LLM"，留在 `agent-service.ts`，MCP 不复用：
-- `narrowToolsForRound`、`selectTools` 的按需下发。
+- `narrowToolsForRound`、`selectTools` 的按需下发（位于 `src/agent/tool-routing.ts`）。
 - 流内派发与回滚。
 - 兜底自动组装、催促重试。
 - 方案预览（`generatePlanPreview`）。
@@ -113,14 +114,14 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| P1 | 抽取工具层到 `src/agent/tools/`，仅搬迁 | `npm test` 全部原样通过；`agent-service` 继续导出 `createSession` / `executeToolCall` |
-| P2 | 抽取 `validateSessionOutput`；拆分 `SYSTEM_PROMPT` 到 `prompts.ts` | `runAgentLoop` 行为不变；拆分后的内部 prompt 与原文一致（测试比对） |
+| P1 | 抽取工具层到 `src/tools/`，仅搬迁 | `npm test` 全部通过；测试改为从 `dist/tools` 引入 `createSession` / `executeToolCall` |
+| P2 | 抽取 `validateSessionOutput`；拆分 `SYSTEM_PROMPT` 到 `src/prompts/` | `runAgentLoop` 行为不变；拆分后的内部 prompt 与原文一致（测试比对） |
 | P3 | MCP 层：会话存储、工具注册、`begin_session` / `get_session_state`、HTTP 入口、`instructions`、测试 | 用 SDK in-memory transport 跑通 `begin_session` → `create_*` → `add_feature_*` → `assemble_*`；组装校验失败路径、`requirePlan: false` 路径 |
 | P4（可选） | stdio 入口、类别分级暴露、`sessionId` 备用方案、resources | 按需 |
 
 ## 8. 风险
 
-- 搬迁 handler 时的循环依赖：沿用 `tool-context.ts` 的拆分思路，handler 不依赖 `agent-service.ts`。
+- 搬迁 handler 时的循环依赖：沿用 `core/context.ts` 的拆分思路，handler 不依赖 `agent-service.ts`。
 - 外部 agent 缺少内部 prompt 的使用规范，会影响生成质量：通过 `instructions`（及 resource）补足。
 - 外部 agent 可能漏做计划内的内容：计划可选，漏做的兜底校验减弱；如实测漏做频繁，将 `requirePlan` 改为强制（只是一个参数）。
 - 内存会话泄漏：通过 TTL 与数量上限控制。

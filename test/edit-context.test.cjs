@@ -1,11 +1,11 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall } = require('../dist/agent/agent-service')
+const { createSession, executeToolCall } = require('../dist/tools')
 const {
   countNewElements,
   omitUnchangedBaseElementErrors,
   stackNewElementsOnTop,
-} = require('../dist/agent/edit-context')
+} = require('../dist/tools/assembly/edit-context')
 
 const base = [
   { id: 'a', type: 'Rect', zIndex: 0, width: 100, height: 50 },

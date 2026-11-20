@@ -1,8 +1,9 @@
 const assert = require('node:assert/strict')
 const { describe, it } = require('node:test')
-const { createSession, executeToolCall, minimalAssembleArgs } = require('../dist/agent/agent-service')
-const { compactToolResult } = require('../dist/agent/tool-result-compactor')
-const { selectTools, narrowToolsForRound } = require('../dist/agent/skill-registry')
+const { minimalAssembleArgs } = require('../dist/agent/agent-service')
+const { createSession, executeToolCall } = require('../dist/tools')
+const { compactToolResult } = require('../dist/tools/core/result-compactor')
+const { selectTools, narrowToolsForRound } = require('../dist/agent/tool-routing')
 
 const exec = (session, name, args) => executeToolCall(name, args, session, () => {}, () => {})
 
