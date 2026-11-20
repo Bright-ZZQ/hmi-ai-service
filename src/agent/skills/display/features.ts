@@ -451,7 +451,11 @@ export const ADD_FEATURE_SCALE: SkillRegistryEntry = {
       name: 'add_feature_scale',
       description: `为图元添加缩放动态特性（Scale）。将数据源的值按量程线性映射为缩放比例（zoomMin~zoomMax），数据源是必需的。
 zoomMode=0 等比缩放：宽高同比例，使用 dsDataSourceKey/pos/zoomMin/zoomMax 及量程；zoomMode=1 分别缩放：用 hZoom/vZoom 分别开启水平/垂直方向，各自配置 h* / v* 参数。
-缩放比例范围 0~10，zoomMax 必须大于 zoomMin。存储到 store.dynamicDyna，type 为 GraphDynaZoom。`,
+缩放比例范围 0~10，zoomMax 必须大于 zoomMin。存储到 store.dynamicDyna，type 为 GraphDynaZoom。
+缩放中心默认是图元中心（pos/hPos/vPos=0），图元会向两侧同时伸缩。用缩放做进度条/液位条（强制）：
+- 目标图元（如 barFill）的位置和宽高与轨道（barBg）一致，代表满量程；比例 zoomMin=0、zoomMax=1，量程与测点量程一致。
+- 必须把缩放中心固定在起点侧，否则条会从中间向两边变长，起点处出现空隙：横向条用 zoomMode=1 且 hZoom=1、hPos=3（左端固定）、vZoom=0；纵向条用 vZoom=1、vPos=2（底端固定）、hZoom=0。
+- 优先考虑 add_feature_fill（按比例填充，天然从起点开始）。`,
       parameters: {
         type: 'object',
         properties: {
@@ -503,7 +507,12 @@ export const ADD_FEATURE_FILL: SkillRegistryEntry = {
     function: {
       name: 'add_feature_fill',
       description: `为图元添加填充动态特性（Fill）。按数据源值在量程内的比例，以 fillClr 颜色按 fillDir 方向填充图元（如液位、进度条、储罐液面），数据源是必需的。
-填充比例范围由 minFill~maxFill（0~100%）对应量程下限~上限。存储到 store.dynamicDyna，type 为 GraphDynaFillColor。`,
+填充比例范围由 minFill~maxFill（0~100%）对应量程下限~上限。存储到 store.dynamicDyna，type 为 GraphDynaFillColor。
+填充按目标图元自身的外框计算：填充区从 fillDir 指定的一侧开始，占图元长度/高度的“比例”，剩余部分显示图元原有填充色。
+进度条/液位条的使用要求（强制）：
+- 目标图元（如 barFill）的宽高必须与轨道（barBg）完全相同、位置对齐，代表“满量程”；禁止按当前值把它做成更短的矩形，否则填充区与轨道起点之间会出现空隙。
+- 图元自身的填充色应与轨道背景一致或为透明，fillClr 必须显式传入进度颜色（不要用默认黑色，否则深色背景下填充区看起来像“没有从头开始”）。
+- 横向进度条 fillDir=2（从左到右），纵向液位 fillDir=1（从下到上），不要依赖默认值。`,
       parameters: {
         type: 'object',
         properties: {

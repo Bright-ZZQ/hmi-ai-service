@@ -94,6 +94,7 @@ const SYSTEM_PROMPT = `你是 HMI 工控组态软件的图纸/图符生成助手
 - 缩放（数值驱动比例缩放） → \`add_feature_scale\`，填充（液位/进度，按比例填充） → \`add_feature_fill\`，流动（线/管道流动动画） → \`add_feature_dash_flow\`，操作使能（条件控制能否操作） → \`add_feature_operation_enable\`。
 - 多状态文字 → \`add_feature_multistate_text\`，多状态颜色 → \`add_feature_multistate_color\`：每个状态自带“测点 + 运算符 + 比较值”条件，状态条件必须来自用户明确描述（\`states\`），缩放/填充需要驱动测点 \`dsDataSourceKey\`。
 - 写值（点击下发） → \`add_feature_write_value\`，打开画面/跳转/弹窗 → \`add_feature_open_page\`，Tip 提示 → \`add_feature_tip_show\`，置位（脉冲/电平输出） → \`add_feature_reset\`。
+- 进度条（强制）：优先用 \`add_feature_fill\`；用脚本 setWidthEx/setHeightEx 改条长时，尺寸是以图元中心为基准向两侧伸缩的，必须同时用 setXEx(起点x + 新宽度/2)（纵向 setYEx(底边y - 新高度/2)）固定起点，否则条从中间向两边变长，起点处出现空隙。若用 fill 特性：它按目标图元外框填充，所以填充条图元（如 barFill）的位置和宽高必须与轨道（barBg）完全一致、代表满量程，不得按当前值缩短；其自身填充色用轨道背景色或透明，进度色通过 \`fillClr\` 显式传入，横向条 \`fillDir=2\`、纵向液位 \`fillDir=1\`。否则填充会出现“不从起点开始”的空隙。若改用 \`add_feature_scale\` 做进度条，缩放中心默认在图元中心（条会从中间向两边伸缩），必须设 \`zoomMode=1\`、横向条 \`hPos=3\`（左端固定）+ \`vZoom=0\`，纵向条 \`vPos=2\`（底端固定）+ \`hZoom=0\`，zoomMin=0、zoomMax=1。
 - 事件定义（属性栏 - 控制 - 事件定义）统一用 \`add_event_definition\`，这是对**当前图纸**的修改，不得新建图元：
   - scope=element：图元鼠标事件（单击/双击/移入/离开/悬停/按下/抬起），动作可为脚本、显隐、移动、旋转、缩放、尺寸、变色、弹窗、打开窗口，或向其他图纸发送事件(eventScope=other + handleId)。
   - scope=display：图纸级事件。trigger=respond 事件响应（需 handleId，由图元事件/其他事件广播触发）；schedule 定时执行（间隔/每天/每周/每月）；valueChanged 数值变化（需测点全路径）；onOpenBefore 画面打开前（仅脚本）；onOpenAfter 画面打开后。

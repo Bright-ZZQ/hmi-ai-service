@@ -31,6 +31,13 @@ export function getElementFillColor(element: Rec): string | undefined {
   return typeof attrs?.fill === 'string' ? attrs.fill : undefined
 }
 
+/** 未指定填充方向时按图元形状推断：横向长条从左到右(2)，其余从下到上(1) */
+function defaultFillDir(element: Rec): number {
+  const width = Number(element.width)
+  const height = Number(element.height)
+  return Number.isFinite(width) && Number.isFinite(height) && width > height ? 2 : 1
+}
+
 export function attachFeatureToElement(element: Rec, storeKey: FeatureStoreKey, feature: object): void {
   const elementStore = isRecord(element.store) ? { ...element.store } : {}
   const existing = Array.isArray(elementStore[storeKey]) ? [...elementStore[storeKey] as unknown[]] : []
@@ -67,7 +74,9 @@ export function prepareFeature(
       }
       const featureArgs = name === 'add_feature_blink'
         ? { ...args, elementFillColor: getElementFillColor(element) }
-        : hasPivot ? { ...args, rotCenter: 0 } : args
+        : name === 'add_feature_fill' && args.fillDir == null
+          ? { ...args, fillDir: defaultFillDir(element) }
+          : hasPivot ? { ...args, rotCenter: 0 } : args
       const feature = buildDynamicFeature(name, featureArgs)
       return { feature, storeKey: 'dynamicDyna', kind: '动态' }
     }
