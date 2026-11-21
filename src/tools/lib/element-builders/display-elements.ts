@@ -42,26 +42,61 @@ export function calcRoatePos(x: number, y: number, w: number, h: number) {
   return { x: x + w / 2, y: y + h / 2 }
 }
 
+/** 渐变方向 → 渐变起点在包围盒中的相对位置（与编辑器序列化的 centerX / centerY 一致） */
+const GRADIENT_DIRECTION_ORIGIN: Record<string, [number, number]> = {
+  center: [0.5, 0.5],
+  top: [0.5, 0],
+  bottom: [0.5, 1],
+  left: [0, 0.5],
+  right: [1, 0.5],
+  leftTop: [0, 0],
+  leftBottom: [0, 1],
+  rightTop: [1, 0],
+  rightBottom: [1, 1],
+}
+const GRADIENT_TYPES = new Set(['linear', 'radial', 'single_spread', 'double_spread'])
+
+/**
+ * 规范化渐变模式串（"方向 类型"）。只写类型（如 "radial"）时方向默认 top；方向或类型无法识别返回 undefined。
+ * 图纸与图符共用。
+ */
+export function normalizeGradientMode(gradient: unknown): string | undefined {
+  if (typeof gradient !== 'string' || !gradient.trim()) return undefined
+  const tokens = gradient.trim().split(/\s+/)
+  const type = tokens.length > 1 ? tokens[1] : tokens[0]
+  const direction = tokens.length > 1 ? tokens[0] : 'top'
+  if (!Object.hasOwn(GRADIENT_DIRECTION_ORIGIN, direction) || !GRADIENT_TYPES.has(type)) return undefined
+  return `${direction} ${type}`
+}
+
 /**
  * 构造颜色对象（支持渐变）。
  *
  * 纯色：`{ startColor }`
- * 渐变：`{ startColor, endColor, gradient }`，其中 gradient 形如 `"top linear"`、
- * `"center radial"`，由 "方向 类型" 组成：
- * - 方向：top / bottom / left / right / leftTop / leftBottom / rightTop / rightBottom / center
- * - 类型：linear / radial / single_spread / double_spread
+ * 渐变：`{ startColor, endColor, gradientMode, centerX, centerY }`，这是编辑器反序列化真正识别的格式：
+ * gradientMode 为渐变类型，centerX / centerY（0~1）为渐变起点位置，三者缺一编辑器都不会显示渐变。
+ *
+ * 入参 `gradient` 形如 `"top linear"`、`"center radial"`（方向 + 类型），`start` 是方向所指一侧（渐变起点）的颜色，
+ * `end` 是另一侧（终点）的颜色。注意编辑器的渲染是 [0, endColor, 1, startColor]：即 JSON 的 endColor 出现在
+ * 渐变起点、startColor 出现在终点，因此这里要把两者对调写入，才能让“start=起点色、end=终点色”的直观语义成立。
+ * 无法识别的渐变串按纯色处理。
  */
 export function buildColorObj(
   start: string,
   end?: string,
   gradient?: string,
-): Record<string, string> {
-  const color: Record<string, string> = { startColor: start }
-  if (gradient) {
-    color.endColor = end || start
-    color.gradient = gradient
+): Record<string, string | number> {
+  const mode = normalizeGradientMode(gradient)
+  if (!mode) return { startColor: start }
+  const [direction, type] = mode.split(' ')
+  const origin = GRADIENT_DIRECTION_ORIGIN[direction]
+  return {
+    startColor: end || start,
+    endColor: start,
+    gradientMode: type,
+    centerX: origin[0],
+    centerY: origin[1],
   }
-  return color
 }
 
 // ============================================================
@@ -91,6 +126,77 @@ export function getBaseFields(type: string, layer: string) {
     type,
     layer,
   }
+}
+
+// ============================================================
+// 视觉细节：阴影 / 边框线型 / 箭头 / 静态旋转
+// ============================================================
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.round(value), min), max)
+}
+
+const round2 = (value: number) => Math.round(value * 100) / 100
+
+/** 有边框线型（dash）的图元：与编辑器 borderTypes 一致 */
+const BORDER_STYLE_TYPES = new Set(['Rectangle', 'RoundRect', 'Ellipse', 'Pie', 'Arc', 'Chord', 'Polygon', 'RegularPolygon'])
+/** 有箭头属性的图元（编辑器仅直线与弧支持） */
+const ARROW_TYPES = new Set(['Line', 'Arc'])
+const MAX_BORDER_STYLE = 4
+const MAX_ARROW_TYPE = 8
+
+/** 仅在调用方显式传入时才写入，未传入的图元 JSON 保持原样 */
+function applyVisualExtras(element: Record<string, unknown>, params: Record<string, unknown>): void {
+  if (isFiniteNumber(params.shadowOpacity)) element.shadowOpacity = Math.min(Math.max(params.shadowOpacity, 0), 1)
+  if (typeof params.shadowColor === 'string' && params.shadowColor) element.shadowColor = params.shadowColor
+  for (const key of ['shadowBlur', 'shadowOffsetX', 'shadowOffsetY'] as const) {
+    const value = params[key]
+    if (isFiniteNumber(value)) element[key] = key === 'shadowBlur' ? Math.max(value, 0) : value
+  }
+
+  const type = String(element.type)
+  if (BORDER_STYLE_TYPES.has(type) && isFiniteNumber(params.borderStyle)) {
+    element.borderStyle = clampInt(params.borderStyle, 0, MAX_BORDER_STYLE)
+  }
+  if (ARROW_TYPES.has(type)) {
+    for (const key of ['startArrowType', 'endArrowType'] as const) {
+      const value = params[key]
+      if (isFiniteNumber(value)) element[key] = clampInt(value, 0, MAX_ARROW_TYPE)
+    }
+    for (const key of ['startArrowSize', 'endArrowSize'] as const) {
+      const value = params[key]
+      if (isFiniteNumber(value)) element[key] = Math.max(Math.round(value), 0)
+    }
+  }
+}
+
+/** 可通过 rotation 参数旋转的图元：位置由外接矩形（localRect）决定的类型 */
+export const ROTATABLE_TYPES = new Set(['Rectangle', 'RoundRect', 'Ellipse', 'Text', 'Picture', 'Pie', 'Arc', 'Chord', 'RegularPolygon'])
+
+/**
+ * 静态旋转：编辑器的 localRect 保存的是“旋转后”的 4 个顶点，roateAngle 为旋转角度，roatePos 为旋转中心。
+ * 因此要把未旋转的顶点绕 roatePos 顺时针转 angle 度，并写入 roateAngle。angle 为 0 / 非法值时不做任何修改。
+ * 必须在最终的 roatePos（含 pivotX/pivotY）确定后调用。
+ */
+export function applyStaticRotation(element: Record<string, unknown>, angle: unknown): void {
+  if (!isFiniteNumber(angle) || !ROTATABLE_TYPES.has(String(element.type))) return
+  const normalized = ((angle % 360) + 360) % 360
+  const rect = element.localRect as Array<{ x: number, y: number }> | undefined
+  const pivot = element.roatePos as { x: number, y: number } | undefined
+  if (normalized === 0 || !Array.isArray(rect) || !pivot) return
+  const radian = (normalized * Math.PI) / 180
+  const cos = Math.cos(radian)
+  const sin = Math.sin(radian)
+  element.localRect = rect.map(point => {
+    const dx = point.x - pivot.x
+    const dy = point.y - pivot.y
+    return { x: round2(pivot.x + dx * cos - dy * sin), y: round2(pivot.y + dx * sin + dy * cos) }
+  })
+  element.roateAngle = normalized
 }
 
 // ============================================================
@@ -225,6 +331,9 @@ export interface TextParams {
   bold?: boolean
   italic?: boolean
   underline?: boolean
+  deleteline?: boolean
+  letterSpacing?: number
+  wrap?: 'char' | 'word' | 'none'
   name?: string
   layer?: string
   zIndex?: number
@@ -232,6 +341,8 @@ export interface TextParams {
 
 const TEXT_H_ALIGN: Record<string, number> = { left: 0, center: 1, right: 2 }
 const TEXT_V_ALIGN: Record<string, number> = { top: 0, middle: 1, bottom: 2 }
+const TEXT_WRAP: Record<string, number> = { char: 0, word: 1, none: 2 }
+const MAX_LETTER_SPACING = 50
 
 export function buildText(params: TextParams) {
   const {
@@ -246,10 +357,15 @@ export function buildText(params: TextParams) {
     bold = false,
     italic = false,
     underline = false,
+    deleteline = false,
+    wrap,
     name,
     layer = '1',
     zIndex = 0,
   } = params
+  const letterSpacing = isFiniteNumber(params.letterSpacing)
+    ? Math.min(Math.max(params.letterSpacing, 0), MAX_LETTER_SPACING)
+    : 0
 
   const localRect = calcLocalRect(x, y, width, height)
   const roatePos = calcRoatePos(x, y, width, height)
@@ -271,14 +387,14 @@ export function buildText(params: TextParams) {
     roatePos,
     text: encodedText,
     // 编辑器标准格式：family,size,-1,5,bold,italic,underline,deleteline,letterSpacing,0
-    font: `${fontFamily},${fontSize},-1,5,${bold ? 1 : 0},${italic ? 1 : 0},${underline ? 1 : 0},0,0,0`,
+    font: `${fontFamily},${fontSize},-1,5,${bold ? 1 : 0},${italic ? 1 : 0},${underline ? 1 : 0},${deleteline ? 1 : 0},${letterSpacing},0`,
     underline,
-    deleteline: false,
+    deleteline: Boolean(deleteline),
     textColor: { startColor: fill },
     fillColor: { startColor: fill },
     borderColor: { startColor: 'rgba(255,255,255,0)' },
     borderWidth: 0,
-    textWrap: 0,
+    textWrap: typeof TEXT_WRAP[wrap as string] === 'number' ? TEXT_WRAP[wrap as string] : 0,
     // 编辑器使用数值枚举：水平 0左/1中/2右，垂直 0上/1中/2下
     textHAlign: TEXT_H_ALIGN[textAlign] ?? 1,
     textVAlign: TEXT_V_ALIGN[textBaseline] ?? 1,
@@ -299,6 +415,8 @@ export interface LineParams {
   zIndex?: number
 }
 
+const LINE_STYLE_TO_BORDER_STYLE: Record<string, number> = { solid: 0, dashed: 1, dotted: 2 }
+
 export function buildLine(params: LineParams) {
   const {
     x1, y1, x2, y2,
@@ -317,6 +435,7 @@ export function buildLine(params: LineParams) {
   const localRect = calcLocalRect(x, y, width, height)
   const roatePos = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
 
+  // 编辑器直线以 line 点数组绘制（x1/y1/x2/y2 不会被识别），线型使用数值枚举 borderStyle
   return {
     id: generateId(),
     ...getBaseFields('Line', layer),
@@ -326,12 +445,12 @@ export function buildLine(params: LineParams) {
     _originInfo: { width, height },
     localRect,
     roatePos,
-    x1, y1, x2, y2,
+    line: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
     borderColor: { startColor: stroke },
     fillColor: { startColor: 'rgba(255,255,255,0)' },
     textColor: { startColor: stroke },
     borderWidth: strokeWidth,
-    lineStyle,
+    borderStyle: LINE_STYLE_TO_BORDER_STYLE[lineStyle] ?? 0,
     zIndex,
   }
 }
@@ -818,8 +937,17 @@ export function buildRegularPolygon(params: RegularPolygonParams) {
 // 统一 Builder 入口
 // ============================================================
 
-/** 根据类型名和参数字典生成图元 JSON */
+/** 根据类型名和参数字典生成图元 JSON（含阴影、边框线型、箭头等视觉细节；旋转由 applyStaticRotation 在旋转中心确定后应用） */
 export function buildDisplayElement(
+  type: string,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const element = buildBaseDisplayElement(type, params)
+  applyVisualExtras(element, params)
+  return element
+}
+
+function buildBaseDisplayElement(
   type: string,
   params: Record<string, unknown>,
 ): Record<string, unknown> {

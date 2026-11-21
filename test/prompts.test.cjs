@@ -40,4 +40,17 @@ describe('系统提示词', () => {
       assert.ok(text.includes(word), `应包含：${word}`)
     }
   })
+
+  it('MCP instructions 含按图还原模式，并按类型给出对应工具对照', () => {
+    const display = buildMcpInstructions('display')
+    const symbol = buildMcpInstructions('symbol')
+    for (const text of [display, symbol]) {
+      assert.ok(text.includes('按图还原模式'))
+      assert.ok(text.includes('先测量，再创建'))
+    }
+    assert.ok(display.includes('endArrowType') && display.includes('borderStyle'))
+    assert.ok(!display.includes('图符（Symbol）细节工具对照'))
+    assert.ok(symbol.includes('图符（Symbol）细节工具对照'))
+    assert.ok(!symbol.includes('图纸（Display）细节工具对照'))
+  })
 })

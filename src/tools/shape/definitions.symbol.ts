@@ -3,7 +3,32 @@
  */
 
 import type { SkillRegistryEntry } from '../../types'
-import { SHAPE_GRADIENT_PROPS, STROKE_GRADIENT_PROPS } from '../_shared/fragments'
+import { LINE_ARROW_PROPS, SHAPE_BORDER_STYLE_PROP, SHAPE_GRADIENT_PROPS, STROKE_GRADIENT_PROPS } from '../_shared/fragments'
+
+const SYMBOL_OPACITY_PROP = {
+  opacity: { type: 'number', description: '图元整体不透明度 0~1，默认 1。原图中半透明的图元才设置' },
+} as const
+
+/**
+ * 为图符创建工具追加视觉细节参数（整体不透明度、边框线型；直线/弧另有箭头），返回新的注册项，不修改原定义。
+ * 文字没有边框，只追加不透明度。
+ */
+export function withSymbolDetailProps(entry: SkillRegistryEntry, kind: 'text' | 'shape' | 'arrow'): SkillRegistryEntry {
+  const extra = kind === 'text'
+    ? { ...SYMBOL_OPACITY_PROP }
+    : { ...SYMBOL_OPACITY_PROP, ...SHAPE_BORDER_STYLE_PROP, ...(kind === 'arrow' ? LINE_ARROW_PROPS : {}) }
+  const fn = entry.toolDef.function
+  return {
+    ...entry,
+    toolDef: {
+      ...entry.toolDef,
+      function: {
+        ...fn,
+        parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extra } },
+      },
+    },
+  }
+}
 
 export const CREATE_SYMBOL_RECT: SkillRegistryEntry = {
   group: 'symbol',

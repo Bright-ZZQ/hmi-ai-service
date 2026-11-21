@@ -12,7 +12,7 @@ type Rec = Record<string, unknown>
 
 export interface Bounds { x: number, y: number, width: number, height: number }
 
-const POINT_ARRAY_KEYS = ['localRect', 'polygon', 'points'] as const
+const POINT_ARRAY_KEYS = ['localRect', 'polygon', 'points', 'line'] as const
 const MIN_FONT_SIZE = 6
 
 function isNum(value: unknown): value is number {

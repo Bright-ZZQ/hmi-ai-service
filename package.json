@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "test": "npm run build && node scripts/check-deps.cjs && node --test test/dynamic-feature-builders.test.cjs test/script-tools.test.cjs test/edit-context.test.cjs test/model-point-resolver.test.cjs test/assemble-robustness.test.cjs test/display-integrity.test.cjs test/text-encoding.test.cjs test/extended-tools.test.cjs test/thinking-digest.test.cjs test/plan-preview.test.cjs test/round-efficiency.test.cjs test/overlay-events.test.cjs test/prompts.test.cjs test/finalize.test.cjs test/mcp.test.cjs",
+    "test": "npm run build && node scripts/check-deps.cjs && node --test test/dynamic-feature-builders.test.cjs test/script-tools.test.cjs test/edit-context.test.cjs test/model-point-resolver.test.cjs test/assemble-robustness.test.cjs test/display-integrity.test.cjs test/text-encoding.test.cjs test/extended-tools.test.cjs test/thinking-digest.test.cjs test/plan-preview.test.cjs test/round-efficiency.test.cjs test/overlay-events.test.cjs test/prompts.test.cjs test/finalize.test.cjs test/mcp.test.cjs test/visual-fidelity.test.cjs",
     "start": "node dist/index.js"
   },
   "dependencies": {

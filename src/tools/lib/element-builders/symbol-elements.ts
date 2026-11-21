@@ -6,6 +6,17 @@
  */
 
 import { decodeHtmlEntities } from '../text-entities'
+import { normalizeGradientMode } from './display-elements'
+
+// 与编辑器 BORDER_STYLE_MAP 一致：边框线型 key → dash 数组
+const BORDER_STYLE_DASH: Record<number, number[]> = {
+  0: [0, 0],
+  1: [5, 5],
+  2: [3, 3],
+  3: [10, 4, 4, 4],
+  4: [10, 4, 4, 4, 4, 4],
+}
+const MAX_ARROW_TYPE = 8
 
 function generateNodeId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -45,6 +56,12 @@ function bounds(points: number[]) {
 }
 
 function commonAttrs(args: Record<string, unknown>, name: string) {
+  const fill = string(args.fill, '#D8D8D8')
+  const stroke = string(args.stroke, '#979797')
+  // 编辑器渲染渐变为 [0, store.gradientColor, 1, attrs.fill]：store 里的渐变色在起点、attrs 里的颜色在终点，
+  // 因此渐变时 attrs 存“终点色”，起点色（工具参数 fill / stroke）写入 store。
+  const fillGradient = normalizeGradientMode(args.fillGradient)
+  const strokeGradient = normalizeGradientMode(args.strokeGradient)
   return {
     draggable: boolean(args.draggable, true),
     shadowOpacity: number(args.shadowOpacity, 0),
@@ -53,8 +70,8 @@ function commonAttrs(args: Record<string, unknown>, name: string) {
     shadowOffsetY: number(args.shadowOffsetY, 3),
     shadowColor: string(args.shadowColor, '#1ABC9C'),
     hitStrokeWidth: number(args.hitStrokeWidth, 4),
-    fill: string(args.fill, '#D8D8D8'),
-    stroke: string(args.stroke, '#979797'),
+    fill: fillGradient ? string(args.fillEndColor, fill) : fill,
+    stroke: strokeGradient ? string(args.strokeEndColor, stroke) : stroke,
     strokeWidth: number(args.strokeWidth, 1),
     name: string(args.name, nextName(name)),
     _scaleX: 1,
@@ -64,6 +81,9 @@ function commonAttrs(args: Record<string, unknown>, name: string) {
     moveable: boolean(args.moveable, true),
     rotation: number(args.rotation, 0),
     logicLayer: '1',
+    ...(typeof args.opacity === 'number' && Number.isFinite(args.opacity)
+      ? { opacity: Math.min(Math.max(args.opacity, 0), 1) }
+      : {}),
   }
 }
 
@@ -74,18 +94,46 @@ function store(shape: string, width: number, height: number, args?: Record<strin
     node_id: generateNodeId(),
   }
   if (args) {
-    // 填充渐变：store.gradientMode + store.gradientColor（attrs.fill 作为起点色）
-    if (typeof args.fillGradient === 'string' && args.fillGradient) {
-      base.gradientMode = args.fillGradient
-      base.gradientColor = string(args.fillEndColor, string(args.fill, '#D8D8D8'))
+    // 填充渐变：store.gradientMode + store.gradientColor（起点色），attrs.fill 为终点色
+    const fillGradient = normalizeGradientMode(args.fillGradient)
+    if (fillGradient) {
+      base.gradientMode = fillGradient
+      base.gradientColor = string(args.fill, '#D8D8D8')
     }
-    // 边框渐变：store.borderGradientMode + store.borderGradientColor
-    if (typeof args.strokeGradient === 'string' && args.strokeGradient) {
-      base.borderGradientMode = args.strokeGradient
-      base.borderGradientColor = string(args.strokeEndColor, string(args.stroke, '#979797'))
+    // 边框渐变：store.borderGradientMode + store.borderGradientColor（起点色），attrs.stroke 为终点色
+    const strokeGradient = normalizeGradientMode(args.strokeGradient)
+    if (strokeGradient) {
+      base.borderGradientMode = strokeGradient
+      base.borderGradientColor = string(args.stroke, '#979797')
     }
+    // 边框线型：store.dashKey 记录枚举，attrs.dash 为实际虚线数组（由 withLineDetails 写入）
+    const dashKey = borderStyleKey(args.borderStyle)
+    if (dashKey !== undefined) base.dashKey = dashKey
   }
   return base
+}
+
+function borderStyleKey(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const key = Math.min(Math.max(Math.round(value), 0), 4)
+  return key === 0 ? undefined : key
+}
+
+/** 边框线型 dash 数组与直线 / 弧的箭头属性：仅在显式传入时写入 */
+function withLineDetails(attrs: Record<string, unknown>, args: Record<string, unknown>, shape: string): Record<string, unknown> {
+  const dashKey = borderStyleKey(args.borderStyle)
+  if (dashKey !== undefined) attrs.dash = BORDER_STYLE_DASH[dashKey]
+  if (shape === 'Line' || shape === 'Arc') {
+    for (const key of ['startArrowType', 'endArrowType'] as const) {
+      const value = args[key]
+      if (typeof value === 'number' && Number.isFinite(value)) attrs[key] = Math.min(Math.max(Math.round(value), 0), MAX_ARROW_TYPE)
+    }
+    for (const key of ['startArrowSize', 'endArrowSize'] as const) {
+      const value = args[key]
+      if (typeof value === 'number' && Number.isFinite(value)) attrs[key] = Math.max(Math.round(value), 0)
+    }
+  }
+  return attrs
 }
 
 function buildRect(args: Record<string, unknown>) {
@@ -101,6 +149,7 @@ function buildRect(args: Record<string, unknown>) {
     height,
   }
   if (cornerRadius !== undefined) attrs.cornerRadius = cornerRadius
+  withLineDetails(attrs, args, shape)
   return { className: 'Rect', attrs, store: store(shape, width, height, args) }
 }
 
@@ -109,7 +158,7 @@ function buildEllipse(args: Record<string, unknown>) {
   const height = number(args.height, 200)
   return {
     className: 'Ellipse',
-    attrs: {
+    attrs: withLineDetails({
       ...commonAttrs(args, '椭圆'),
       x: number(args.x, width / 2),
       y: number(args.y, height / 2),
@@ -117,7 +166,7 @@ function buildEllipse(args: Record<string, unknown>) {
       height,
       radiusX: width / 2,
       radiusY: height / 2,
-    },
+    }, args, 'Ellipse'),
     store: store('Ellipse', width, height, args),
   }
 }
@@ -177,6 +226,7 @@ function buildLineLike(
     height: box.height,
   }
   if (Array.isArray(args.controlPoints)) attrs.controlPoints = args.controlPoints
+  withLineDetails(attrs, args, options.shape)
   return {
     className: options.className,
     attrs,
@@ -202,6 +252,7 @@ function buildArcLike(
     endAngle: number(args.endAngle, 90),
   }
   if (options.closePath) attrs.closePath = true
+  withLineDetails(attrs, args, options.shape)
   return {
     className: options.className,
     attrs,

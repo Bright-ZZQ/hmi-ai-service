@@ -3,7 +3,31 @@
  */
 
 import type { SkillRegistryEntry } from '../../types'
-import { SHAPE_GRADIENT_PROPS, SHAPE_PIVOT_PROPS, STROKE_GRADIENT_PROPS } from '../_shared/fragments'
+import {
+  LINE_ARROW_PROPS,
+  SHAPE_BORDER_STYLE_PROP,
+  SHAPE_GRADIENT_PROPS,
+  SHAPE_PIVOT_PROPS,
+  SHAPE_ROTATION_PROP,
+  SHAPE_SHADOW_PROPS,
+  STROKE_GRADIENT_PROPS,
+  TEXT_STYLE_PROPS,
+} from '../_shared/fragments'
+
+/** 外接矩形定位的形状：旋转中心 + 静态旋转 + 阴影 + 边框线型 */
+const BOX_SHAPE_PROPS = {
+  ...SHAPE_PIVOT_PROPS,
+  ...SHAPE_ROTATION_PROP,
+  ...SHAPE_SHADOW_PROPS,
+  ...SHAPE_BORDER_STYLE_PROP,
+} as const
+
+/** 顶点定位的多边形：顶点已是最终位置，不提供静态旋转 */
+const POLYGON_SHAPE_PROPS = {
+  ...SHAPE_PIVOT_PROPS,
+  ...SHAPE_SHADOW_PROPS,
+  ...SHAPE_BORDER_STYLE_PROP,
+} as const
 
 export const CREATE_DISPLAY_RECT: SkillRegistryEntry = {
   group: 'display',
@@ -25,7 +49,7 @@ export const CREATE_DISPLAY_RECT: SkillRegistryEntry = {
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           cornerRadius: { type: 'number', description: '圆角大小(px)，指定后类型变为 RoundRect' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -55,7 +79,7 @@ export const CREATE_DISPLAY_ELLIPSE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -88,8 +112,12 @@ export const CREATE_DISPLAY_TEXT: SkillRegistryEntry = {
           bold: { type: 'boolean', description: '是否加粗，默认 false' },
           italic: { type: 'boolean', description: '是否斜体，默认 false' },
           underline: { type: 'boolean', description: '是否下划线，默认 false' },
+          ...TEXT_STYLE_PROPS,
           textAlign: { type: 'string', enum: ['left', 'center', 'right'], description: '水平对齐，默认 center' },
           textBaseline: { type: 'string', enum: ['top', 'middle', 'bottom'], description: '垂直对齐，默认 middle' },
+          ...SHAPE_ROTATION_PROP,
+          ...SHAPE_PIVOT_PROPS,
+          ...SHAPE_SHADOW_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -106,7 +134,8 @@ export const CREATE_DISPLAY_LINE: SkillRegistryEntry = {
     type: 'function',
     function: {
       name: 'create_display_line',
-      description: `创建图纸直线图元。用于在图纸上绘制直线段。返回完整的 elements 格式 JSON 对象。`,
+      description: `创建图纸直线图元（Line）：两点之间的普通细线，可设线宽、线型（实线/虚线/点线）和端点箭头。
+适用于各类细线：连接线、工艺连线（含流程图里的细线，不论颜色）、引线、分割线、虚线框边、箭头线等，线外观简洁、无纹理，是画线条的默认选择。需要多段转折的连线用 create_display_polyline。返回完整的 elements 格式 JSON 对象。`,
       parameters: {
         type: 'object',
         properties: {
@@ -117,6 +146,8 @@ export const CREATE_DISPLAY_LINE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '线条颜色，默认 #979797' },
           strokeWidth: { type: 'number', description: '线条宽度，默认 1' },
           lineStyle: { type: 'string', enum: ['solid', 'dashed', 'dotted'], description: '线型，默认 solid' },
+          ...LINE_ARROW_PROPS,
+          ...SHAPE_SHADOW_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -153,7 +184,7 @@ export const CREATE_DISPLAY_POLYGON: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...POLYGON_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -179,6 +210,9 @@ export const CREATE_DISPLAY_PICTURE: SkillRegistryEntry = {
           y: { type: 'number', description: '左上角 y 坐标(px)' },
           width: { type: 'number', description: '显示宽度(px)' },
           height: { type: 'number', description: '显示高度(px)' },
+          ...SHAPE_ROTATION_PROP,
+          ...SHAPE_PIVOT_PROPS,
+          ...SHAPE_SHADOW_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -208,7 +242,7 @@ export const CREATE_DISPLAY_PIE: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -240,7 +274,8 @@ export const CREATE_DISPLAY_ARC: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
+          ...LINE_ARROW_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -272,7 +307,7 @@ export const CREATE_DISPLAY_CHORD: SkillRegistryEntry = {
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },
@@ -342,7 +377,10 @@ export const CREATE_DISPLAY_PIPE: SkillRegistryEntry = {
     type: 'function',
     function: {
       name: 'create_display_pipe',
-      description: `创建图纸管道图元（Pipeline）。通过路径顶点数组定义管道走向。
+      description: `创建图纸管道图元（Pipeline）：外观是较粗、带纹路的管状对象（管径 borderWidth 默认 10），通过路径顶点数组定义走向，
+可挂流动动画（add_feature_dash_flow）和管道流动脚本（set_pipe_script），这些只有管道才支持。
+不是“线”的替代品：画细线（包括流程图里的工艺连线）请用 create_display_line / create_display_polyline，不要用本工具。
+仅当用户明确要求“管道”外观或管道流动效果时才使用。
 含 lineCap（端点样式）和 lineJoin（连接点样式）字段。返回完整的 elements 格式 JSON 对象，type 为 "Pipeline"。`,
       parameters: {
         type: 'object',
@@ -382,7 +420,8 @@ export const CREATE_DISPLAY_POLYLINE: SkillRegistryEntry = {
     function: {
       name: 'create_display_polyline',
       description: `创建图纸折线图元（Polyline）。通过顶点坐标数组定义折线形状，close 固定为 false。
-与多边形（Polygon）的区别是折线不闭合。返回完整的 elements 格式 JSON 对象，type 为 "Polyline"。`,
+与多边形（Polygon）的区别是折线不闭合。
+适用于多段转折的细线：连接线、工艺连线（含流程图里的细线，不论颜色）、引线、示意线等（可设线宽、线型），外观简洁、无纹理，是画折线的默认选择。返回完整的 elements 格式 JSON 对象，type 为 "Polyline"。`,
       parameters: {
         type: 'object',
         properties: {
@@ -431,7 +470,7 @@ width 和 height = radius × 2。如 sides=3 为等边三角形，sides=6 为正
           stroke: { type: 'string', description: '边框色，默认 #979797' },
           borderWidth: { type: 'number', description: '边框宽度，默认 1' },
           ...SHAPE_GRADIENT_PROPS,
-          ...SHAPE_PIVOT_PROPS,
+          ...BOX_SHAPE_PROPS,
           name: { type: 'string', description: '图元名称，默认自动生成' },
           layer: { type: 'string', description: '图层ID，默认 "1"' },
           zIndex: { type: 'number', description: '层级，默认自动递增' },

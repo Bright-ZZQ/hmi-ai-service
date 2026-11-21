@@ -1,4 +1,4 @@
-import { buildDisplayElement, buildSymbolElement } from '../lib/element-builders'
+import { applyStaticRotation, buildDisplayElement, buildSymbolElement } from '../lib/element-builders'
 import { readPivotPoint } from '../feature/rotate-pivot'
 import { emitElements } from '../core/context'
 import type { ToolExecContext } from '../core/context'
@@ -74,6 +74,7 @@ export function handleCreateDisplayElement({ name, args, session, onStep, emit }
   }
   // 与其他部件绕同一圆心转动（扇叶绕轮毂）：旋转中心直接落在公共圆心
   if (pivot) element.roatePos = pivot
+  applyStaticRotation(element, args.rotation)
   session.workingElements.push(element)
 
   const step: AgentStep = {

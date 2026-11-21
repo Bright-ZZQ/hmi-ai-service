@@ -21,16 +21,16 @@ const GRADIENT_HINT = '渐变模式，形如 "top linear"、"center radial"。�
 
 /** 填充 + 边框渐变参数（用于有填充的形状） */
 export const SHAPE_GRADIENT_PROPS = {
-  fillEndColor: { type: 'string', description: '填充渐变终点色（配合 fillGradient 使用），省略则等于起点色' },
-  fillGradient: { type: 'string', description: `填充${GRADIENT_HINT}` },
-  strokeEndColor: { type: 'string', description: '边框渐变终点色（配合 strokeGradient 使用），省略则等于起点色' },
-  strokeGradient: { type: 'string', description: `边框${GRADIENT_HINT}` },
+  fillEndColor: { type: 'string', description: '填充渐变终点色（渐变方向所指一侧的另一端；配合 fillGradient 使用），省略则等于 fill' },
+  fillGradient: { type: 'string', description: `填充${GRADIENT_HINT}。fill 为方向所指一侧（起点）的颜色，如 "top linear" 时 fill 在顶部、fillEndColor 在底部；"center radial" 时 fill 在中心、fillEndColor 在边缘` },
+  strokeEndColor: { type: 'string', description: '边框渐变终点色（配合 strokeGradient 使用），省略则等于 stroke' },
+  strokeGradient: { type: 'string', description: `边框${GRADIENT_HINT}。仅线性渐变（xxx linear）对边框生效；stroke 为起点色，strokeEndColor 为终点色` },
 } as const
 
 /** 仅边框渐变参数（用于线条/曲线/管道等无填充形状） */
 export const STROKE_GRADIENT_PROPS = {
-  strokeEndColor: { type: 'string', description: '线条渐变终点色（配合 strokeGradient 使用），省略则等于起点色' },
-  strokeGradient: { type: 'string', description: `线条${GRADIENT_HINT}` },
+  strokeEndColor: { type: 'string', description: '线条渐变终点色（配合 strokeGradient 使用），省略则等于 stroke' },
+  strokeGradient: { type: 'string', description: `线条${GRADIENT_HINT}。仅线性渐变（xxx linear）生效；stroke 为起点色，strokeEndColor 为终点色` },
 } as const
 
 // ============================================================
@@ -64,6 +64,44 @@ export const FEATURE_CONDITION_PROPS = {
 export const SHAPE_PIVOT_PROPS = {
   pivotX: { type: 'number', description: '可选：旋转中心的画布绝对 x 坐标，默认包围盒中心。该图元要与其他部件绕同一圆心转动（如扇叶绕轮毂、辐条绕轮心）时，与 pivotY 一起传公共圆心' },
   pivotY: { type: 'number', description: '可选：旋转中心的画布绝对 y 坐标，与 pivotX 配合使用' },
+} as const
+
+// ============================================================
+// 可复用参数片段 — 视觉还原（阴影 / 旋转 / 线型 / 箭头 / 文字）
+// ============================================================
+
+/** 阴影参数（编辑器 属性栏-阴影） */
+export const SHAPE_SHADOW_PROPS = {
+  shadowOpacity: { type: 'number', description: '阴影不透明度 0~1，默认 0（无阴影）。原图有投影/发光效果时才设置' },
+  shadowColor: { type: 'string', description: '阴影颜色，默认 #1ABC9C，设置阴影时务必按原图指定' },
+  shadowBlur: { type: 'number', description: '阴影模糊半径，默认 6' },
+  shadowOffsetX: { type: 'number', description: '阴影水平偏移，默认 3' },
+  shadowOffsetY: { type: 'number', description: '阴影垂直偏移，默认 3' },
+} as const
+
+/** 旋转角度：只用于外接矩形定位的图元（矩形/椭圆/文字/图片/饼/弧/弦/正多边形） */
+export const SHAPE_ROTATION_PROP = {
+  rotation: { type: 'number', description: '静态旋转角度(度)，顺时针为正，默认 0。x/y/width/height 仍填“未旋转时”的位置与尺寸，服务端绕旋转中心（默认包围盒中心，或 pivotX/pivotY）旋转。用于原图中倾斜/竖排的矩形、文字、斜放设备；动态旋转仍用 add_feature_rotate' },
+} as const
+
+/** 边框线型枚举（与编辑器 属性栏-边框样式 一致） */
+export const SHAPE_BORDER_STYLE_PROP = {
+  borderStyle: { type: 'number', description: '边框线型：0=实线（默认）、1=虚线、2=点线、3=点划线、4=双点划线。原图边框是虚线/点线时设置' },
+} as const
+
+/** 直线/弧的两端箭头（工艺流程图的流向箭头） */
+export const LINE_ARROW_PROPS = {
+  startArrowType: { type: 'number', description: '起点箭头：0=无（默认）、1=实心箭头、2=开放箭头、3=燕尾、4=水晶、5=圆形、6=反向实心、7=反向开放、8=反向燕尾' },
+  startArrowSize: { type: 'number', description: '起点箭头大小，默认 4' },
+  endArrowType: { type: 'number', description: '终点箭头：取值同 startArrowType。流程图流向箭头通常设为 1' },
+  endArrowSize: { type: 'number', description: '终点箭头大小，默认 4' },
+} as const
+
+/** 文字排版细节 */
+export const TEXT_STYLE_PROPS = {
+  letterSpacing: { type: 'number', description: '字间距(px)，范围 0~50，默认 0。原图文字明显偏疏/偏密时才设置' },
+  wrap: { type: 'string', enum: ['char', 'word', 'none'] as string[], description: '换行方式：char=任意位置换行（默认）、word=按单词换行、none=单行不换行。原图中的单行标签用 none，避免换行错位' },
+  deleteline: { type: 'boolean', description: '是否加删除线，默认 false' },
 } as const
 
 /** 脚本类工具设置图元旋转中心：脚本用 setRotationEx 让多个图元绕同一圆心转动时使用 */

@@ -136,12 +136,16 @@ export function lintDisplay(
     const widest = Math.max(...lines.map(line => measureTextWidth(line, size, bold)))
     const needHeight = lines.length * size * TEXT_LINE_HEIGHT
     const autoFrame = element.autoFrame === true || element.autoFrame === 1
-    if (!autoFrame && (widest > bounds.width + 1 || needHeight > bounds.height + 2) && !capped(issues, 'text_overflow')) {
+    // 旋转后的外接矩形宽高会互换，溢出判断要用文本框自身的宽高
+    const rotated = typeof element.roateAngle === 'number' && element.roateAngle % 360 !== 0
+    const boxWidth = rotated && typeof element.width === 'number' ? element.width : bounds.width
+    const boxHeight = rotated && typeof element.height === 'number' ? element.height : bounds.height
+    if (!autoFrame && (widest > boxWidth + 1 || needHeight > boxHeight + 2) && !capped(issues, 'text_overflow')) {
       issues.push({
         level: 'warning',
         code: 'text_overflow',
         element: elementKey(element),
-        message: `文字 ${label(element)}（${text.length > 12 ? `${text.slice(0, 12)}…` : text}）估算需要约 ${Math.round(widest)}×${Math.round(needHeight)}px，文本框仅 ${Math.round(bounds.width)}×${Math.round(bounds.height)}px，可能被截断或溢出`,
+        message: `文字 ${label(element)}（${text.length > 12 ? `${text.slice(0, 12)}…` : text}）估算需要约 ${Math.round(widest)}×${Math.round(needHeight)}px，文本框仅 ${Math.round(boxWidth)}×${Math.round(boxHeight)}px，可能被截断或溢出`,
       })
     }
 

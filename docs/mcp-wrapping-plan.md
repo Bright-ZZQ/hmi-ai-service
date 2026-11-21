@@ -96,6 +96,7 @@
 
 对外：
 - MCP `instructions` 使用共享部分，并推荐先调用 `declare_generation_plan`。
+- MCP `instructions` 末尾追加“按图还原模式”（`buildImageFidelitySection`，仅 MCP 使用，内部循环提示词不变）：用户提供图片要求照图生成时，先按原图像素设画布并测量清单，忠实还原颜色/位置/文字，不做排版美化，并对照图纸/图符各自的细节工具（`rotation`、`borderStyle`、箭头、阴影、`letterSpacing`/`wrap`）。
 - 如需压缩 `instructions` 体积，将"动态特性"长段放入 MCP resource（如 `hmi://guide/features`）按需读取，`instructions` 仅保留核心流程。
 
 对内：
