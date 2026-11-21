@@ -80,7 +80,7 @@
 
 `requirePlan: false` 的语义：外部 agent 声明了 `declare_generation_plan` 则按计划校验数量与特性；未声明则跳过计划校验。Schema、交互问题等其余校验始终生效。
 
-`modelPointApi` 取自 HTTP 请求头 `Authorization`、`namespace`，与 `/api/ai/generate` 一致；stdio 模式使用环境变量。
+`modelPointApi`（查询点信息）在 MCP 侧配置，优先从 mcp.json 的 `headers` 读取：`editorSvcUrl`（地址）、`editorAuthorization`（鉴权完整值）、`projectCode`（工程编码）。未提供的项回退到环境变量 `MCP_EDITOR_SVC_URL` / `MCP_EDITOR_AUTHORIZATION` / `MCP_PROJECT_CODE`（或 `createMcpRouter` 同名选项 `editorSvcUrl` / `editorAuthorization` / `projectCode`）；stdio 模式只使用环境变量。地址未配置时跳过测点补全。
 
 ### 5.5 传输与挂载
 

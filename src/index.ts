@@ -34,10 +34,25 @@ if (process.env.MCP_ENABLED !== 'false') {
 // 启动
 app.listen(config.port, () => {
   console.log(`[AI Service] 服务已启动: http://localhost:${config.port}`)
-  console.log(`[AI Service] 模型: ${config.agent.model}`)
-  console.log(`[AI Service] API URL: ${config.agent.modelApiUrl}`)
 
-  if (!config.agent.modelApiKey) {
-    console.warn('[AI Service] ⚠️  AI_MODEL_API_KEY 未配置，请在 .env 文件中设置')
+  const modelConfigured = Boolean(process.env.AI_MODEL_API_KEY && process.env.AI_MODEL_NAME)
+  if (modelConfigured) {
+    console.log(`[AI Service] Agent Service：可用，模型: 可用 (${config.agent.model}, ${config.agent.modelApiUrl})`)
+  } else {
+    const missing = ['AI_MODEL_API_KEY', 'AI_MODEL_NAME'].filter(name => !process.env[name])
+    console.warn(`[AI Service] Agent Service：不可用，模型: 未配置，不可用（缺少 ${missing.join('、')}，请在 .env 文件中设置）`)
+  }
+
+  const mcpEnabled = process.env.MCP_ENABLED !== 'false'
+  if (mcpEnabled) {
+    console.log(`[AI Service] MCP: 可用 (http://localhost:${config.port}/mcp/display, /mcp/symbol)`)
+  } else {
+    console.warn('[AI Service] MCP: 已禁用 (MCP_ENABLED=false)，不可用')
+  }
+
+  if (config.editorSvcUrl) {
+    console.log('[AI Service] 查询测点: 可用')
+  } else {
+    console.warn('[AI Service] 查询测点: 未配置 HMI_EDITOR_SVC_URL，不可用（生成时将跳过测点信息补全）')
   }
 })

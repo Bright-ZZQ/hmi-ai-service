@@ -32,7 +32,7 @@ export function loadConfig(): ServiceConfig {
     agent: {
       modelApiUrl: process.env.AI_MODEL_API_URL || 'https://api.openai.com/v1/chat/completions',
       modelApiKey: process.env.AI_MODEL_API_KEY || '',
-      model: process.env.AI_MODEL_NAME || 'gpt-4',
+      model: process.env.AI_MODEL_NAME || 'unknown',
       maxRetries: parseInt(process.env.AI_MAX_RETRIES || '2', 10),
       modelApiMaxRetries: parseInt(process.env.AI_MODEL_API_MAX_RETRIES || '3', 10),
       modelApiRetryDelay: parseInt(process.env.AI_MODEL_API_RETRY_DELAY || '1000', 10),

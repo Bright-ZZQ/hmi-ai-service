@@ -10,7 +10,6 @@ import type { Request, Response } from 'express'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
-import { loadConfig } from '../config'
 import type { EditorType, ModelPointApiConfig } from '../types'
 import { createHmiMcpServer } from './server'
 import type { ExportedResult, HmiMcpServerOptions, RequestHeaders } from './server'
@@ -28,6 +27,12 @@ export interface McpRouterOptions {
   publicBaseUrl?: string
   resultTtlMs?: number
   maxResults?: number
+  /** 查询点信息的编辑器后端地址；优先取请求头 editorSvcUrl，再读 MCP_EDITOR_SVC_URL */
+  editorSvcUrl?: string
+  /** 查询点信息的鉴权（Authorization 完整值）；优先取请求头 editorAuthorization，再读 MCP_EDITOR_AUTHORIZATION */
+  editorAuthorization?: string
+  /** 查询点信息的工程编码；优先取请求头 projectCode，再读 MCP_PROJECT_CODE */
+  projectCode?: string
 }
 
 interface SessionEntry {
@@ -52,13 +57,22 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-function resolveModelPointApi(headers: RequestHeaders): ModelPointApiConfig | undefined {
-  const baseUrl = loadConfig().editorSvcUrl
-  if (!baseUrl) return undefined
-  return {
-    baseUrl,
-    authorization: firstHeader(headers.authorization),
-    namespace: firstHeader(headers.namespace),
+/** 查询点信息所用的编辑器后端配置；mcp.json 请求头优先，未提供的项取 MCP_* 环境变量 */
+function createModelPointApiResolver(options: McpRouterOptions) {
+  const baseUrl = (options.editorSvcUrl ?? process.env.MCP_EDITOR_SVC_URL ?? '').trim()
+  const authorization = (options.editorAuthorization ?? process.env.MCP_EDITOR_AUTHORIZATION ?? '').trim()
+  const projectCode = (options.projectCode ?? process.env.MCP_PROJECT_CODE ?? '').trim()
+  // Node 会把请求头名转成小写
+  const headerValue = (headers: RequestHeaders, name: string): string =>
+    (firstHeader(headers[name]) ?? '').trim()
+  return (headers: RequestHeaders): ModelPointApiConfig | undefined => {
+    const resolvedBaseUrl = headerValue(headers, 'editorsvcurl') || baseUrl
+    if (!resolvedBaseUrl) return undefined
+    return {
+      baseUrl: resolvedBaseUrl,
+      authorization: headerValue(headers, 'editorauthorization') || authorization || undefined,
+      namespace: headerValue(headers, 'projectcode') || projectCode || undefined,
+    }
   }
 }
 
@@ -86,7 +100,10 @@ export function createMcpRouter(options: McpRouterOptions = {}): Router {
   const publicBaseUrl = (options.publicBaseUrl ?? process.env.MCP_PUBLIC_BASE_URL ?? '').trim().replace(/\/+$/, '')
   const resultTtlMs = options.resultTtlMs ?? envInt('MCP_RESULT_TTL_MS', DEFAULT_RESULT_TTL_MS)
 
+  const resolveModelPointApi = createModelPointApiResolver(options)
+
   const sessions = new Map<string, SessionEntry>()
+  const announcedEditorUrls = new Set<string>()
   const results = new ResultStore({
     ttlMs: resultTtlMs,
     maxEntries: options.maxResults ?? envInt('MCP_MAX_RESULTS', DEFAULT_MAX_RESULTS),
@@ -147,6 +164,12 @@ export function createMcpRouter(options: McpRouterOptions = {}): Router {
           return
         }
         entry = await openSession(editorType)
+        // editorSvcUrl 来自 mcp.json 请求头，改后无需重启；每个地址只提示一次
+        const baseUrl = resolveModelPointApi(req.headers)?.baseUrl
+        if (baseUrl && !announcedEditorUrls.has(baseUrl)) {
+          announcedEditorUrls.add(baseUrl)
+          console.log(`[MCP] 查询测点: 可用 (${baseUrl})`)
+        }
       } else {
         reject(res, 400, -32000, 'Bad Request: Mcp-Session-Id header is required')
         return
