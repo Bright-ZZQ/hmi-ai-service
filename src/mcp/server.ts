@@ -54,11 +54,25 @@ const isAgentOnlyTool = (name: string): boolean => getSkillMeta(name)?.audience 
 const BEGIN_SESSION = 'begin_session'
 const GET_SESSION_STATE = 'get_session_state'
 const EXPORT_RESULT = 'export_result'
+const MAX_SOURCE_DIMENSION = 20000
+const AUTO_LAYOUT_TOOLS = new Set(['align_elements', 'distribute_elements', 'fit_to_canvas'])
+
+interface SourceImage {
+  width: number
+  height: number
+}
+
+function isSourceImage(value: unknown): value is SourceImage {
+  if (!isPlainRecord(value)) return false
+  return [value.width, value.height].every(size =>
+    typeof size === 'number' && Number.isInteger(size) && size > 0 && size <= MAX_SOURCE_DIMENSION,
+  )
+}
 
 const SESSION_TOOLS: Tool[] = [
   {
     name: BEGIN_SESSION,
-    description: '开始（或重置）一次绘制会话。不传 currentJson 为从空白画布开始；传入已有图纸/图符 JSON 则载入其中的图元，之后可在其基础上增量修改。会清空当前工作区的全部图元。一次对话要生成多张时，开始下一张之前必须先调用本工具，否则新图元会叠加到当前这张上；已组装成功但尚未导出的结果会自动保留，用于最后一起导出。',
+    description: '开始（或重置）一次绘制会话。按图片/截图/设计稿生成时，必须先传 sourceImage 开启按图还原模式；只有用户明确要求美化或重新设计时才传 allowRestyling: true。不传 currentJson 从空白开始；传入已有图纸/图符 JSON 则载入图元以便增量修改。生成多张时逐张开启会话，已组装未导出的结果会保留。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -66,13 +80,27 @@ const SESSION_TOOLS: Tool[] = [
           type: 'object',
           description: '已有的图纸（含 document）或图符（含 comps）完整 JSON，可选',
         },
+        sourceImage: {
+          type: 'object',
+          description: '参考图的原始像素尺寸。传入后默认锁定画布尺寸、保留图元层级并禁用自动排版。',
+          properties: {
+            width: { type: 'integer', minimum: 1, maximum: MAX_SOURCE_DIMENSION },
+            height: { type: 'integer', minimum: 1, maximum: MAX_SOURCE_DIMENSION },
+          },
+          required: ['width', 'height'],
+        },
+        allowRestyling: {
+          type: 'boolean',
+          default: false,
+          description: '仅当用户明确要求美化或重新设计时设为 true；须与 sourceImage 同传。',
+        },
       },
       required: [],
     },
   },
   {
     name: GET_SESSION_STATE,
-    description: '查看当前会话状态：画布尺寸、工作区图元概要（id/名称/类型/位置尺寸）、是否已声明计划、是否已组装、待导出的结果数量。',
+    description: '查看当前会话状态：画布尺寸、是否按图还原、工作区图元概要（id/名称/类型/位置尺寸）、是否已声明计划、是否已组装、待导出的结果数量。',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
 ]
@@ -130,6 +158,7 @@ function isPlainRecord(value: unknown): value is Rec {
 export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
   const { editorType, resolveModelPointApi, exportResult } = options
   let session = createSession(editorType)
+  let sourceImage: SourceImage | undefined
 
   const toolDefinitions = getToolsForType(editorType).filter(tool => !isAgentOnlyTool(tool.function.name))
   const requiredByTool = new Map(toolDefinitions.map(tool => [tool.function.name, tool.function.parameters.required]))
@@ -165,13 +194,27 @@ export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
     if (args.currentJson !== undefined && !isPlainRecord(args.currentJson)) {
       return textResult('currentJson 必须是 JSON 对象', true)
     }
+    const source = args.sourceImage
+    if (source !== undefined && !isSourceImage(source)) {
+      return textResult(`sourceImage.width 和 sourceImage.height 必须是 1~${MAX_SOURCE_DIMENSION} 的整数像素值`, true)
+    }
+    if (args.allowRestyling !== undefined && (typeof args.allowRestyling !== 'boolean' || source === undefined)) {
+      return textResult('allowRestyling 必须为布尔值且与 sourceImage 一起传入', true)
+    }
     const previous = snapshotCurrent()
     if (previous) pendingFiles.push(previous)
     session = createSession(editorType, args.currentJson)
+    sourceImage = args.allowRestyling === true ? undefined : source
+    if (sourceImage) {
+      session.canvas.pageWidth = sourceImage.width
+      session.canvas.pageHeight = sourceImage.height
+      session.preserveCreationOrder = true
+    }
     currentExported = false
     return jsonResult({
       success: true,
       canvas: session.canvas,
+      reproduceImage: Boolean(sourceImage),
       elementCount: session.workingElements.length,
       pendingExportCount: pendingFiles.length,
     })
@@ -181,6 +224,7 @@ export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
     success: true,
     editorType,
     canvas: session.canvas,
+    reproduceImage: Boolean(sourceImage),
     elementCount: session.workingElements.length,
     elements: session.workingElements.slice(0, MAX_STATE_ELEMENTS).map(briefOf),
     truncated: session.workingElements.length > MAX_STATE_ELEMENTS,
@@ -230,7 +274,7 @@ export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
     const { name } = request.params
-    const args = request.params.arguments ?? {}
+    let args = request.params.arguments ?? {}
 
     if (name === BEGIN_SESSION) return beginSession(args)
     if (name === GET_SESSION_STATE) return getSessionState()
@@ -241,7 +285,29 @@ export function createHmiMcpServer(options: HmiMcpServerOptions): Server {
     const missing = required.filter(key => args[key] === undefined)
     if (missing.length > 0) return textResult(`缺少必填参数: ${missing.join('、')}`, true)
 
-    if (isAssemblyTool(name)) return assemble(name, args, extra.requestInfo?.headers ?? {})
+    const assembly = isAssemblyTool(name)
+    if (sourceImage) {
+      if (AUTO_LAYOUT_TOOLS.has(name)) {
+        return textResult(`按图还原模式禁止 ${name}；请按原图坐标创建或用 update_element 修正图元。`, true)
+      }
+      if (assembly || name === 'set_page_property') {
+        const { width, height } = sourceImage
+        const widthKey = editorType === 'display' ? 'pageWidth' : 'width'
+        const heightKey = editorType === 'display' ? 'pageHeight' : 'height'
+        if ((args[widthKey] !== undefined && args[widthKey] !== width)
+          || (args[heightKey] !== undefined && args[heightKey] !== height)) {
+          return textResult(`按图还原画布已锁定为 ${width}×${height}，请省略尺寸参数或使用原图尺寸。`, true)
+        }
+        if (assembly) {
+          if (args.elementsData !== undefined || args.compsData !== undefined) {
+            return textResult('按图还原模式下组装必须使用工作区图元，请省略 elementsData/compsData。', true)
+          }
+          args = { ...args, [widthKey]: width, [heightKey]: height }
+        }
+      }
+    }
+
+    if (assembly) return assemble(name, args, extra.requestInfo?.headers ?? {})
 
     const raw = executeToolCall(name, args, session, noop, noop)
     return textResult(compactToolResult(name, raw), isFailure(raw))

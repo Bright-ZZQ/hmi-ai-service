@@ -5,6 +5,7 @@
  * 启动: npm run dev  (tsx watch src/index.ts)
  * 端口: 默认 3100 (通过 PORT 环境变量配置)
  */
+import './polyfills'
 import express from 'express'
 import cors from 'cors'
 import { loadConfig } from './config'

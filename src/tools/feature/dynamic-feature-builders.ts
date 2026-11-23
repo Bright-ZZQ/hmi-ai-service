@@ -5,6 +5,8 @@
  * 动态特性写入 store.dynamicDyna，交互特性写入 store.interactiveDyna。
  */
 
+import { randomUUID } from 'node:crypto'
+
 type DynamicFeatureToolName =
   | 'add_feature_rotate'
   | 'add_feature_move'
@@ -145,7 +147,7 @@ export function buildConditionEntry(
   // 后端按 leftValue 订阅测点并计算条件，logic 为编辑器校验必填；nodeType 等字段由 model-point-resolver 在组装后补全
   const leftValue: Record<string, string> = { ...writeDataPoint(dataSourceKey), type: 'm' }
   return {
-    num: globalThis.crypto.randomUUID(),
+    num: randomUUID(),
     leftValue,
     sign: Number(operator ?? 0),
     rightValue: { original: String(rightValue ?? '1'), ref: '' },
@@ -190,7 +192,7 @@ function buildMultiStateConditions(
     if (!state.payload) throw new Error(`states[${index}] 缺少 ${payloadKey}`)
     const operatorIndex = Number(state.operator ?? 0)
     return {
-      id: globalThis.crypto.randomUUID(),
+      id: randomUUID(),
       name: `${state.dataSourceKey} ${OPERATOR_LABELS[operatorIndex] ?? ''} ${String(state.value ?? '1')}`.replace(/\s+/g, ' '),
       value: state.payload,
       conditions: [buildConditionEntry(state.dataSourceKey, state.operator, state.value)],
@@ -758,7 +760,7 @@ export function buildDynamicFeature(
   }
   const type = DYNAMIC_FEATURE_TYPES[name]
   const feature: DynamicFeatureConfig = {
-    id: globalThis.crypto.randomUUID(),
+    id: randomUUID(),
     name: type,
     type,
     conditions: buildConditions(args),
@@ -783,7 +785,7 @@ export function buildInteractiveFeature(
 ): InteractiveFeatureConfig {
   if (name === 'add_feature_tip_show') {
     return {
-      id: globalThis.crypto.randomUUID(),
+      id: randomUUID(),
       name: TIP_SHOW_TYPE,
       type: TIP_SHOW_TYPE,
       act: Number(args.act ?? INTERACTIVE_ACT.HOVER),
@@ -794,7 +796,7 @@ export function buildInteractiveFeature(
   }
   if (name === 'add_feature_reset') {
     return {
-      id: globalThis.crypto.randomUUID(),
+      id: randomUUID(),
       name: RESET_TYPE,
       type: RESET_TYPE,
       act: Number(args.act ?? INTERACTIVE_ACT.LEFT_DOWN),
@@ -805,7 +807,7 @@ export function buildInteractiveFeature(
     ? (isAnalogWrite(args) ? WRITE_VALUE_ANALOG : WRITE_VALUE_DIGITAL)
     : OPEN_PAGE_TYPE
   return {
-    id: globalThis.crypto.randomUUID(),
+    id: randomUUID(),
     name: type,
     type,
     act: Number(args.act ?? DEFAULT_INTERACTIVE_ACT),

@@ -57,8 +57,10 @@
 - 不暴露 `ask_user`（外部 agent 有自己的用户通道）：按 `SkillMeta.audience === 'agent'` 过滤，不再硬编码工具名。
 - 其余工具默认全部暴露；预留按 `SkillMeta.category` 限制暴露类别的配置，避免占满外部 agent 的上下文。
 - 额外提供：
-  - `begin_session({ currentJson? })`：重置会话，并载入已有 JSON 以便增量编辑。
-  - `get_session_state`：返回画布与当前图元概要。
+  - `begin_session({ currentJson?, sourceImage?, allowRestyling? })`：重置会话；可载入已有 JSON 以便增量编辑。按截图、照片或设计稿生成时，创建图元前必须传 `sourceImage: { width, height }`（原始像素尺寸），例如 `{ "sourceImage": { "width": 1268, "height": 643 } }`。
+  - `get_session_state`：返回画布与当前图元概要；`reproduceImage: true` 表示按图还原保护已开启。
+
+按图还原时，服务端锁定画布为参考图尺寸，拒绝自动对齐、等距分布、适应画布，以及在组装时另传图元列表；图纸组装不再自动把全幅形状沉底。代理仍需依据原图测量位置与尺寸、提取颜色、核对文字与遮挡关系；MCP 不接收图片本身，无法自行识别参考图或做像素级校验。只有用户明确授权整体重新排版或调整画布时才传 `allowRestyling: true`。纯文字任务不传 `sourceImage`，原有流程不变；`/api/ai/generate` 仍仅接收文字。
 
 ### 5.2 会话与入口
 

@@ -991,6 +991,7 @@ function buildBaseDisplayElement(
 export interface DisplayDocumentParams {
   pageName: string
   elementsData: Record<string, unknown>[]
+  preserveCreationOrder?: boolean
   pageWidth?: number
   pageHeight?: number
   bgColor?: string
@@ -1060,7 +1061,7 @@ export function buildDisplayDocument(params: DisplayDocumentParams) {
 
   // zIndex 重排：先把覆盖整块画布的背景/底板下沉到最底层，其余保持创建顺序（稳定排序），
   // 避免背景因创建顺序靠后而遮挡显示内容。
-  const ordered = elementsData
+  const ordered = params.preserveCreationOrder ? elementsData : elementsData
     .map((el, i) => ({ el, i, bg: isBackgroundElement(el, pageWidth, pageHeight) }))
     .sort((a, b) => (a.bg === b.bg ? a.i - b.i : a.bg ? -1 : 1))
     .map(entry => entry.el)

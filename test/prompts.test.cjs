@@ -47,6 +47,10 @@ describe('系统提示词', () => {
     for (const text of [display, symbol]) {
       assert.ok(text.includes('按图还原模式'))
       assert.ok(text.includes('先测量，再创建'))
+      assert.ok(text.includes('不需要用户额外说“照图生成”'))
+      assert.ok(text.includes('begin_session({ sourceImage: { width, height } })'))
+      assert.ok(text.includes('只有用户明确要求放宽'))
+      assert.ok(text.indexOf('按图还原模式') < text.indexOf('## 布局指南'))
     }
     assert.ok(display.includes('endArrowType') && display.includes('borderStyle'))
     assert.ok(!display.includes('图符（Symbol）细节工具对照'))

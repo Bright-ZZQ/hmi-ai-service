@@ -70,6 +70,7 @@ export function handleAssembleDisplay({ name, args, session, onStep, emit }: Too
   const document: Record<string, unknown> = buildDisplayDocument({
     pageName: (args.pageName as string) || (baseDocument?.name as string) || 'AI生成图纸',
     elementsData: finalElements,
+    preserveCreationOrder: session.preserveCreationOrder,
     pageWidth: (args.pageWidth as number | undefined) ?? (session.pageProperty.pageWidth as number | undefined) ?? (basePageProperty?.pageWidth as number | undefined),
     pageHeight: (args.pageHeight as number | undefined) ?? (session.pageProperty.pageHeight as number | undefined) ?? (basePageProperty?.pageHeight as number | undefined),
     bgColor: (args.bgColor as string | undefined) ?? (session.pageProperty.bgColor as string | undefined) ?? (basePageProperty?.bgColor as string | undefined),

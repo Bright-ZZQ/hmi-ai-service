@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "HMI Engine Web AI Agent Service — 图纸/图符 AI 生成后端服务",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -19,7 +22,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
-    "@types/node": "^22.5.0",
+    "@types/node": "^18.19.130",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }

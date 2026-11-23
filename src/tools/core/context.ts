@@ -37,6 +37,8 @@ export interface SessionState {
   pageParamDecls: Rec[]
   /** 本轮登记的层级调整，assemble_display 时在最终图元列表上依次执行 */
   zOrderOps: ZOrderOp[]
+  /** 按图还原时，全幅遮罩也按创建顺序叠放，不推断为背景。 */
+  preserveCreationOrder?: boolean
   /** 目标不明确时向用户的提问，设置后本轮结束 */
   question?: AgentQuestion
   /** 流式绘制用的画布信息；最终以 assemble 结果为准 */

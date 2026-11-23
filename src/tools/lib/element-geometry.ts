@@ -5,6 +5,7 @@
  * Line 的 x1..y2、Pie 的 cx/cy 等字段中。平移 / 缩放时必须一起变换，否则编辑器反序列化后图元会错位。
  */
 
+import { randomUUID } from 'node:crypto'
 import { generateId } from './element-builders/display-elements'
 import { isRecord } from './element-lookup'
 
@@ -203,14 +204,14 @@ function freshenFeatures(list: unknown): unknown {
   if (!Array.isArray(list)) return list
   return list.map((feature) => {
     if (!isRecord(feature)) return feature
-    const next: Rec = { ...feature, id: globalThis.crypto.randomUUID() }
+    const next: Rec = { ...feature, id: randomUUID() }
     if (Array.isArray(feature.conditions)) next.conditions = freshenConditions(feature.conditions)
     if (Array.isArray(feature.multiStateConditions)) {
       next.multiStateConditions = feature.multiStateConditions.map(state => (
         isRecord(state)
           ? {
               ...state,
-              id: globalThis.crypto.randomUUID(),
+              id: randomUUID(),
               conditions: freshenConditions(state.conditions),
             }
           : state
@@ -224,7 +225,7 @@ function freshenConditions(list: unknown): unknown {
   if (!Array.isArray(list)) return list
   return list.map(item => (
     isRecord(item)
-      ? { ...item, num: globalThis.crypto.randomUUID(), conditions: freshenConditions(item.conditions) }
+      ? { ...item, num: randomUUID(), conditions: freshenConditions(item.conditions) }
       : item
   ))
 }
@@ -233,8 +234,8 @@ function freshenEvent(event: unknown): unknown {
   if (!isRecord(event)) return event
   return {
     ...event,
-    ...(typeof event.id === 'string' ? { id: globalThis.crypto.randomUUID() } : {}),
-    ...(typeof event.name === 'string' ? { name: `event${globalThis.crypto.randomUUID().replace(/-/g, '')}` } : {}),
+    ...(typeof event.id === 'string' ? { id: randomUUID() } : {}),
+    ...(typeof event.name === 'string' ? { name: `event${randomUUID().replace(/-/g, '')}` } : {}),
   }
 }
 

@@ -5,6 +5,7 @@
  * Body: { prompt: string, editorType: 'display' | 'symbol' }
  * Response: SSE 流 (text/event-stream)
  */
+import { randomUUID } from 'node:crypto'
 import { Router, Request, Response } from 'express'
 import { runAgentLoop } from '../agent/agent-service'
 import { loadConfig } from '../config'
@@ -37,7 +38,7 @@ router.post('/ai/generate', async (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no') // 禁用 nginx 缓冲
 
-  const streamId = globalThis.crypto.randomUUID()
+  const streamId = randomUUID()
   let seq = 0
 
   // SSE 发送工具函数

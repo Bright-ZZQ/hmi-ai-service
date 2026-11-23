@@ -85,6 +85,83 @@ describe('MCP 工具暴露', () => {
   })
 })
 
+describe('MCP 图片复刻', () => {
+  const sourceImage = { width: 1268, height: 643 }
+
+  it('图纸默认锁定原图尺寸，保留图元坐标和全幅遮罩层级，拦截自动排版', async () => {
+    const client = await connect('display')
+    const begun = await callJson(client, 'begin_session', { sourceImage })
+    assert.equal(begun.reproduceImage, true)
+    assert.equal(begun.canvas.pageWidth, sourceImage.width)
+    assert.equal(begun.canvas.pageHeight, sourceImage.height)
+
+    const shapes = [
+      { ...RECT, x: 0 },
+      { ...RECT, x: 17, y: 127, name: '不规则重叠' },
+      { x: 0, y: 0, ...sourceImage, name: '上层全幅遮罩', fill: 'rgba(0,0,0,0.25)' },
+    ]
+    for (const shape of shapes) {
+      const result = await call(client, 'create_display_rect', shape)
+      assert.ok(!result.isError, result.text)
+    }
+    for (const [tool, args] of [
+      ['align_elements', { mode: 'left' }],
+      ['distribute_elements', { axis: 'x' }],
+      ['fit_to_canvas', { mode: 'fit' }],
+      ['set_page_property', { pageWidth: 1880 }],
+      ['assemble_display', { pageName: '试图改尺寸', pageHeight: 962 }],
+      ['assemble_display', { pageName: '试图替换图元', elementsData: [shapes[0]] }],
+    ]) {
+      const result = await call(client, tool, args)
+      assert.equal(result.isError, true, tool)
+      assert.match(result.text, /按图还原/)
+    }
+    assert.equal((await callJson(client, 'get_session_state')).reproduceImage, true)
+    const { document } = await callJson(client, 'assemble_display', { pageName: '原图', bgColor: '#007D80' })
+    assert.equal(document.pageProperty.pageWidth, sourceImage.width)
+    assert.equal(document.pageProperty.pageHeight, sourceImage.height)
+    assert.equal(document.pageProperty.bgColor, '#007D80')
+    assert.deepEqual(document.elements.map(({ name, zIndex, localRect, width, height }) => ({
+      name, zIndex, ...localRect[0], width, height,
+    })), shapes.map(({ fill, ...shape }, zIndex) => ({ ...shape, zIndex })))
+  })
+
+  it('图符复刻锁定原图尺寸；非法参数不清空当前会话', async () => {
+    const client = await connect('symbol')
+    await callJson(client, 'begin_session', { sourceImage, allowRestyling: false })
+    await callJson(client, 'create_symbol_rect', RECT)
+    for (const args of [
+      { sourceImage: { width: 50 } },
+      { sourceImage: { width: 50, height: 0 } },
+      { sourceImage: { width: 50.5, height: 30 } },
+      { sourceImage: { width: 20001, height: 30 } },
+      { sourceImage, allowRestyling: 'true' },
+      { allowRestyling: true },
+    ]) {
+      assert.equal((await call(client, 'begin_session', args)).isError, true)
+    }
+    assert.equal((await call(client, 'assemble_symbol', { symbolName: '改宽', width: 800 })).isError, true)
+    const symbol = await callJson(client, 'assemble_symbol', { symbolName: '原图', background: '#ccddff' })
+    assert.equal(symbol.width, sourceImage.width)
+    assert.equal(symbol.height, sourceImage.height)
+    assert.equal(symbol.background, '#ccddff')
+    assert.equal(symbol.comps.length, 1)
+  })
+
+  it('显式允许美化以及开始无参考图的新会话均可使用普通布局', async () => {
+    const client = await connect('display')
+    await callJson(client, 'begin_session', { sourceImage })
+    for (const args of [{ sourceImage, allowRestyling: true }, {}]) {
+      assert.equal((await callJson(client, 'begin_session', args)).reproduceImage, false)
+      await callJson(client, 'create_display_rect', RECT)
+      const layout = await call(client, 'fit_to_canvas', { mode: 'fit' })
+      assert.ok(!layout.isError, layout.text)
+      const { document } = await callJson(client, 'assemble_display', { pageName: '重新排版', pageWidth: 2000 })
+      assert.equal(document.pageProperty.pageWidth, 2000)
+    }
+  })
+})
+
 describe('MCP 绘制会话', () => {
   it('创建图元后组装，返回完整图纸 JSON', async () => {
     const client = await connect('display')
