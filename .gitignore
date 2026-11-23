@@ -5,3 +5,5 @@ dist/
 
 packager/*/build/
 output/
+
+.claude
