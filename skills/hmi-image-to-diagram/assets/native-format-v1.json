@@ -1,0 +1,64 @@
+{
+  "schema": "hmi-native-format/v1",
+  "common": {
+    "ver": 1,
+    "horMirror": false,
+    "verMirror": false,
+    "moveable": true,
+    "draggable": true,
+    "limitForm": 1,
+    "area": "",
+    "auth": "",
+    "location": ""
+  },
+  "types": {
+    "rectangle": {
+      "type": "Rectangle",
+      "attrs": {"hitStrokeWidth": 4}
+    },
+    "ellipse": {
+      "type": "Ellipse",
+      "attrs": {"hitStrokeWidth": 4}
+    },
+    "polygon": {
+      "type": "Polygon",
+      "attrs": {"close": true, "closed": true, "hitStrokeWidth": 4}
+    },
+    "pipeline": {
+      "type": "Pipeline",
+      "attrs": {"fgEnabled": false, "lineCap": "butt", "lineJoin": "round", "hitStrokeWidth": 8}
+    },
+    "text": {
+      "type": "Text",
+      "attrs": {
+        "fillColor": {"startColor": "#FFFFFF"},
+        "textHAlign": 1,
+        "textVAlign": 1,
+        "textWrap": 0,
+        "underline": false,
+        "deleteline": false,
+        "hitStrokeWidth": 4
+      }
+    },
+    "button": {
+      "type": "NodeSymbol",
+      "attrs": {
+        "src": "symbols/hmi_system/inter/button.json",
+        "hmi.type": "Button",
+        "ds_key": []
+      }
+    },
+    "group": {
+      "type": "Group",
+      "attrs": {}
+    }
+  },
+  "text": {
+    "encoding": "base64-utf8"
+  },
+  "button": {
+    "size": [60, 30],
+    "text_field": "button.text",
+    "pressed_text_field": "button.text.pressed"
+  }
+}

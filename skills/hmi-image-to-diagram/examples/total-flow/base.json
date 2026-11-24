@@ -1,0 +1,36 @@
+{
+  "document": {
+    "name": "总流程图",
+    "code": "example-total-flow",
+    "elements": [],
+    "layers": [
+      {
+        "id": "1",
+        "moveable": true,
+        "name": "",
+        "selectable": true,
+        "visible": true
+      }
+    ],
+    "pageProperty": {
+      "area": "",
+      "auth": "",
+      "bgColor": "rgb(1,129,125)",
+      "bgPic": 1,
+      "height": 875,
+      "pageHeight": 875,
+      "pageWidth": 1696,
+      "picContent": "",
+      "ratio": 0,
+      "refreshCycle": 1000,
+      "templateRef": "",
+      "width": 1696,
+      "zoomEnable": true,
+      "latestIndex": 100000
+    },
+    "pageParams": [],
+    "oldPageParams": [],
+    "pageScript": [],
+    "ver": "1.0"
+  }
+}
