@@ -17,11 +17,9 @@ HMI Engine Web 的图纸（Display）与图符（Symbol）生成后端，支持�
 **一键配置**：把下面这段话发给你的 AI 助手，让它代为安装：
 
 ```text
-请帮我安装 hmi-image-to-diagram skill：
-1. 确认已安装 git、node 18+、pnpm、python 3，缺少的请安装。
-2. 克隆 https://github.com/Bright-ZZQ/hmi-ai-service.git，把 skills/hmi-image-to-diagram 整个目录复制到你识别 skills 的目录（按官方文档确定，不确定就先问我）。
-3. 在该目录运行 python -m unittest discover -s tests 确认通过。
-4. 告诉我安装位置、测试结果，以及是否需要重启 Agent。
+配置如下环境：
+- 运行环境：安装 Git、Node.js、Python 和 Chrome，已存在则跳过。
+- SKILL：从 https://github.com/Bright-ZZQ/hmi-ai-service/tree/main/skills/hmi-image-to-diagram 安装SKILL。
 ```
 
 ## 安装与启动
@@ -47,11 +45,10 @@ pnpm dev
 **一键配置**：把下面这段话发给你的 AI 助手，让它代为配置：
 
 ```text
-请帮我配置 HMI Engine Web 的 MCP：
-1. 确认已安装 git、node 18+、pnpm，缺少的请安装。
-2. 克隆 https://github.com/Bright-ZZQ/hmi-ai-service.git，执行 pnpm install，后台运行 pnpm dev，并用 curl 访问 http://localhost:3100/health 确认启动。
-3. 在你的 MCP 配置中添加两个 Streamable HTTP 服务器：hmi-display（http://localhost:3100/mcp/display）和 hmi-symbol（http://localhost:3100/mcp/symbol）。按官方文档确定配置位置，不确定就先问我。
-4. 告诉我配置位置、服务状态，以及是否需要重启 Agent。
+配置如下环境：
+- 运行环境：安装 Git、Node.js（18 或更高，含 pnpm），已存在则跳过。
+- 服务：克隆 https://github.com/Bright-ZZQ/hmi-ai-service.git，执行 pnpm install，后台运行 pnpm dev，并访问 http://localhost:3100/health 确认启动。
+- MCP：在你的 MCP 配置中添加两个 Streamable HTTP 服务器：hmi-display（http://localhost:3100/mcp/display）和 hmi-symbol（http://localhost:3100/mcp/symbol）。
 ```
 
 ## Agent Service
