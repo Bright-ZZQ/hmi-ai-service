@@ -1,0 +1,51 @@
+{
+  "source": "本次总流程图的四批原生图元快照，比较时归一化随机标识并将数值保留六位小数。",
+  "batches": {
+    "pipes": {
+      "elements": 125,
+      "types": {
+        "Pipeline": 64,
+        "Polygon": 61
+      },
+      "sha256": "2a4ebed78b8798b629047acbc8acd1a0651d441e5adcfb0e76d5da3687422d6f"
+    },
+    "equipment": {
+      "elements": 568,
+      "types": {
+        "Pipeline": 124,
+        "Polygon": 183,
+        "Rectangle": 175,
+        "Group": 63,
+        "Text": 11,
+        "Ellipse": 12
+      },
+      "sha256": "358b87c273fa971d7a40c94cb44146aaa783dd34b353779cf11ee99c181989d0"
+    },
+    "instruments": {
+      "elements": 986,
+      "types": {
+        "Pipeline": 131,
+        "Polygon": 183,
+        "Rectangle": 242,
+        "Group": 130,
+        "Text": 212,
+        "Ellipse": 20,
+        "NodeSymbol": 68
+      },
+      "sha256": "4615900af39c9f8c1be7038339145dbb783d9638941a45058b289841ce19d8d6"
+    },
+    "navigation": {
+      "elements": 1025,
+      "types": {
+        "Pipeline": 131,
+        "Polygon": 183,
+        "Rectangle": 242,
+        "Group": 130,
+        "Text": 212,
+        "Ellipse": 20,
+        "NodeSymbol": 107
+      },
+      "sha256": "dce1de088d66e0029daa9c9724d867a9b8d688f9e979dc323538b416f5df436f"
+    }
+  }
+}
