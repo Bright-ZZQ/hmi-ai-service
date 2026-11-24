@@ -1,9 +1,61 @@
+# Dependencies
 node_modules/
-dist/
-.env
-*.log
+.pnpm-store/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/releases
 
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+.eslintcache
+.npm/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# Misc temp
+*.tmp
+*.pid
+
+# Project specific
 packager/*/build/
 output/
-
 .claude
