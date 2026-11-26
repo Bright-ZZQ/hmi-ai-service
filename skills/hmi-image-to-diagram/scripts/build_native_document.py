@@ -26,7 +26,7 @@ KIND_FIELDS = {
     "ellipse": {"bounds"},
     "polygon": {"points"},
     "pipeline": {"points"},
-    "text": {"bounds", "text"},
+    "text": {"bounds", "text", "rotation_deg"},
     "button": {"bounds", "text", "pressed_text"},
     "group": {"children"},
     "instance": {"template", "at", "params"},
@@ -91,6 +91,20 @@ def corners(bounds):
         {"x": x, "y": y}, {"x": x + width, "y": y},
         {"x": x + width, "y": y + height}, {"x": x, "y": y + height},
     ]
+
+
+def rotate_corners(rect, center, degrees):
+    radians = math.radians(degrees)
+    cos_angle, sin_angle = math.cos(radians), math.sin(radians)
+    cx, cy = center["x"], center["y"]
+    rotated = []
+    for point in rect:
+        dx, dy = point["x"] - cx, point["y"] - cy
+        rotated.append({
+            "x": cx + dx * cos_angle - dy * sin_angle,
+            "y": cy + dx * sin_angle + dy * cos_angle,
+        })
+    return rotated
 
 
 class SceneCompiler:
@@ -277,6 +291,14 @@ class SceneCompiler:
             text = node.get("text")
             if not isinstance(text, str):
                 raise SceneError(f"{path}: text must be a string")
+            if "rotation_deg" in node:
+                degrees = number(node["rotation_deg"], f"{path}.rotation_deg")
+                if "roateAngle" in attrs:
+                    raise SceneError(f"{path}: rotation_deg cannot be combined with roateAngle")
+                element["roateAngle"] = degrees
+                element["localRect"] = rotate_corners(
+                    element["localRect"], element["roatePos"], degrees
+                )
             encoding = self.profile.get("text", {}).get("encoding")
             if encoding == "base64-utf8":
                 element["text"] = base64.b64encode(text.encode("utf-8")).decode("ascii")

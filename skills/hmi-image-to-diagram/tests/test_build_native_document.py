@@ -172,6 +172,35 @@ class NativeDocumentTests(unittest.TestCase):
         self.assertEqual(group["localRect"][0], {"x": 217, "y": 389})
         self.assertEqual(text["pId"], group["id"])
 
+    def test_rotated_text_keeps_native_size_and_expands_group_bounds(self):
+        scene = {
+            "schema": "hmi-native-scene/v1", "namespace": "rotation-test",
+            "templates": {"tag": {"kind": "group", "children": [
+                {"key": "text", "kind": "text", "bounds": [0, 0, 40, 12],
+                 "text": "V2103A1", "rotation_deg": 90},
+            ]}},
+            "batches": [{"key": "labels", "objects": [
+                {"key": "valve", "kind": "instance", "template": "tag",
+                 "at": [30, 40]},
+            ]}],
+        }
+        text, group = build_document(self.base, scene)["document"]["elements"]
+        self.assertEqual(text["roateAngle"], 90)
+        self.assertEqual(text["roatePos"], {"x": 50, "y": 46})
+        self.assertEqual((text["width"], text["height"]), (40, 12))
+        self.assertEqual(text["_originInfo"], {"width": 40, "height": 12})
+        for point, (x, y) in zip(
+            text["localRect"], [(56, 26), (56, 66), (44, 66), (44, 26)],
+            strict=True,
+        ):
+            self.assertAlmostEqual(point["x"], x)
+            self.assertAlmostEqual(point["y"], y)
+        self.assertAlmostEqual(group["localRect"][0]["x"], 44)
+        self.assertAlmostEqual(group["localRect"][0]["y"], 26)
+        self.assertAlmostEqual(group["_originInfo"]["width"], 12)
+        self.assertAlmostEqual(group["_originInfo"]["height"], 40)
+        self.assertEqual(text["pId"], group["id"])
+
     def test_rejects_duplicate_keys_reused_output_and_invalid_geometry(self):
         output = build_document(self.base, self.scene, until_batch="pipes")
         with self.assertRaisesRegex(SceneError, "original base snapshot"):
@@ -182,6 +211,12 @@ class NativeDocumentTests(unittest.TestCase):
             ("nonfinite coordinate", {"key": "a", "kind": "text",
                                       "bounds": [float("nan"), 0, 10, 10],
                                       "text": "x"}),
+            ("nonfinite rotation", {"key": "a", "kind": "text",
+                                    "bounds": [0, 0, 10, 10], "text": "x",
+                                    "rotation_deg": float("inf")}),
+            ("conflicting rotation", {"key": "a", "kind": "text",
+                                      "bounds": [0, 0, 10, 10], "text": "x",
+                                      "rotation_deg": 90, "attrs": {"roateAngle": 0}}),
             ("unknown style", {"key": "a", "kind": "rectangle",
                                "bounds": [0, 0, 10, 10], "style": "missing"}),
             ("missing template", {"key": "a", "kind": "instance",
